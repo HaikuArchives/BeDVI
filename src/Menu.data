@@ -1,0 +1,37 @@
+# <name>, [<shortcut>]
+#
+File,
+About…,         ?
+Open…,          O
+Load…,          L
+Reload,         R
+Quit,           Q
+Display,
+Anti Aliasing,  A
+Border Line,    B
+Move,
+First Page,     <
+Last Page,      >
+Next Page,      +
+Prev Page,      -
+Next Window,    *
+Prev Window,    _
+#
+# <name>, [<shortcut>], <mode>, <dpi>
+#
+Resolution,
+600 dpi, , ljfour,   600
+300 dpi, , cx,       300
+100 dpi, , nextscrn, 100
+#
+# <name>, [<shortcut>], <shrink factor>
+#
+Magnification,
+Shrink to 1/1,  1,  1
+Shrink to 1/2,  2,  2
+Shrink to 1/3,  3,  3
+Shrink to 1/4,  4,  4
+Shrink to 1/5,  5,  5
+Shrink to 1/6,  6,  6
+Shrink to 1/9,  7,  9
+Shrink to 1/12, 8, 12

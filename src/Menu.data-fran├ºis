@@ -1,0 +1,38 @@
+# <name>, [<shortcut>]
+#
+Fichier,
+A propos…,          ?
+Ouvrir…,            O
+Charger…,           L
+Recharger,          R
+Quitter,            Q
+Affichage,
+Lissage,            A
+Ligne de Bordure,   B
+Fenêtre de mesures, M
+Navigation,
+Première Page,      <
+Dernière Page,      >
+Page Suivante,      +
+Page Précédente,    -
+Fentre suivante,    *
+Fentre précédente,  _
+#
+# <name>, [<shortcut>], <mode>, <dpi>
+#
+Résolution,
+600 ppp, , ljfour,   600
+300 ppp, , cx,       300
+100 ppp, , nextscrn, 100
+#
+# <name>, [<shortcut>], <shrink factor>
+#
+Echelle,
+Réduire à 1/1,  1,  1
+Réduire à 1/2,  2,  2
+Réduire à 1/3,  3,  3
+Réduire à 1/4,  4,  4
+Réduire à 1/5,  5,  5
+Réduire à 1/6,  6,  6
+Réduire à 1/9,  7,  9
+Réduire à 1/12, 8, 12
