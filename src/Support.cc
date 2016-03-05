@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: Support.cc,v 2.0 1997/10/12 10:21:35 achim Exp $
+// $Id: Support.cc,v 2.1 1998/10/04 14:25:13 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -31,7 +31,7 @@ uint32 ReadInt(BPositionIO *f, ssize_t Size)
   uint32 x = 0;
   uint8  c;
 
-  while(Size--)
+  while (Size--)
   {
     f->Read(&c, 1);
     x = (x << 8) | c;
@@ -58,7 +58,7 @@ int32 ReadSInt(BPositionIO *f, ssize_t Size)
   f->Read(&c, 1);
   x = c;
 
-  while(--Size)
+  while (--Size)
   {
     f->Read(&c, 1);
     x = (x << 8) | (uint8)c;
@@ -92,7 +92,7 @@ bool InitKpseSem()
 
 void FreeKpseSem()
 {
-  if(kpse_sem >= B_OK)
+  if (kpse_sem >= B_OK)
   {
     acquire_sem(kpse_sem);
     delete_sem(kpse_sem);

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: FontList.h,v 2.1 1998/05/02 09:42:08 achim Exp $
+// $Id: FontList.h,v 2.4 1999/07/25 13:24:21 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -21,6 +21,7 @@
 #endif
 
 class BPositionIO;
+class DrawSettings;
 class DVI;
 class Font;
 
@@ -36,15 +37,16 @@ class FontList
     FontList();
     ~FontList();
 
-    Font *LoadFont(DVI *doc, const char *Name, float Size, long ChkSum, int MagStepVal, double DimConvert);
+    Font *LoadFont(const DVI *doc, const DrawSettings *Settings, const char *Name, float Size, long ChkSum,
+                   int MagStep, double DimConvert);
     void FreeFont(Font *f);
     void FreeAll();
     void FreeUnusedFonts();
     void FlushShrinkedGlyphes();
 
-    bool Ok()
+    bool Ok() const
     {
-      return ListLock >= B_NO_ERROR;
+      return ListLock >= B_OK;
     }
 };
 
@@ -54,32 +56,32 @@ class FontTable
     FontList Fonts;
     sem_id   TableSem;
     Font     **Table;
-    u_long   TableLen;
+    ulong    TableLen;
 
   public:
     FontTable();
     ~FontTable();
 
-    Font *LoadFont(DVI *doc, BPositionIO *File, u_char Command);
-    bool Resize(u_long len);
+    Font *LoadFont(const DVI *doc, const DrawSettings *Settings, BPositionIO *File, Font *VirtualParent, uchar Command);
+    bool Resize(ulong len);
     void FreeFonts();
 
     void FreeUnusedFonts();
     void FlushShrinkedGlyphes();
 
-    u_long TableLength()
+    ulong TableLength() const
     {
       return TableLen;
     }
 
-    Font *operator [] (int no)
+    Font *operator [] (int no) const
     {
       return Table[no];
     }
 
-    bool Ok()
+    bool Ok() const
     {
-      return (TableSem >= B_NO_ERROR) && (Table != NULL) && Fonts.Ok();
+      return (TableSem >= B_OK) && (Table != NULL) && Fonts.Ok();
     }
 };
 

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: GF.cc,v 2.3 1998/08/20 11:16:13 achim Exp $
+// $Id: GF.cc,v 2.5 1999/07/22 13:36:42 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -41,30 +41,30 @@
 #include "TeXFont.h"
 #include "log.h"
 
-static const u_char GF_Paint0    = 0;
-static const u_char GF_Paint1    = 64;
-static const u_char GF_Paint2    = 65;
-static const u_char GF_Paint3    = 66;
-static const u_char GF_BOC       = 67;
-static const u_char GF_BOC1      = 68;
-static const u_char GF_EOC       = 69;
-static const u_char GF_Skip0     = 70;
-static const u_char GF_Skip1     = 71;
-static const u_char GF_Skip2     = 72;
-static const u_char GF_Skip3     = 73;
-static const u_char GF_NewRow0   = 74;
-static const u_char GF_NewRowMax = 238;
-static const u_char GF_XXX1      = 239;
-static const u_char GF_XXX2      = 240;
-static const u_char GF_XXX3      = 241;
-static const u_char GF_XXX4      = 242;
-static const u_char GF_YYY       = 243;
-static const u_char GF_NOP       = 244;
-static const u_char GF_CharLoc   = 245;
-static const u_char GF_CharLoc0  = 246;
-static const u_char GF_Post      = 248;
-static const u_char GF_PostPost  = 249;
-static const u_char GF_Trailer   = 223;
+static const uchar GF_Paint0    = 0;
+static const uchar GF_Paint1    = 64;
+static const uchar GF_Paint2    = 65;
+static const uchar GF_Paint3    = 66;
+static const uchar GF_BOC       = 67;
+static const uchar GF_BOC1      = 68;
+static const uchar GF_EOC       = 69;
+static const uchar GF_Skip0     = 70;
+static const uchar GF_Skip1     = 71;
+static const uchar GF_Skip2     = 72;
+static const uchar GF_Skip3     = 73;
+static const uchar GF_NewRow0   = 74;
+static const uchar GF_NewRowMax = 238;
+static const uchar GF_XXX1      = 239;
+static const uchar GF_XXX2      = 240;
+static const uchar GF_XXX3      = 241;
+static const uchar GF_XXX4      = 242;
+static const uchar GF_YYY       = 243;
+static const uchar GF_NOP       = 244;
+static const uchar GF_CharLoc   = 245;
+static const uchar GF_CharLoc0  = 246;
+static const uchar GF_Post      = 248;
+static const uchar GF_PostPost  = 249;
+static const uchar GF_Trailer   = 223;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
@@ -80,7 +80,7 @@ static const u_char GF_Trailer   = 223;
 static void ReadChar(Font *f, wchar c)
 {
   Glyph      *g;
-  u_char     Cmd;
+  uchar      Cmd;
   int        MinM, MaxM;
   int        MinN, MaxN;
   BitmapUnit *cp;
@@ -91,15 +91,14 @@ static void ReadChar(Font *f, wchar c)
   bool       NewRow;
   int        Count;
   int        WordWeight;
-  u_long     Width, Height;
 
   try
   {
     g = &f->Glyphs[c];
 
-    while(true)
+    while (true)
     {
-      switch(Cmd = ReadInt(f->File, 1))
+      switch (Cmd = ReadInt(f->File, 1))
       {
         case GF_XXX1:
         case GF_XXX2:
@@ -123,20 +122,20 @@ static void ReadChar(Font *f, wchar c)
           g->Ux = -MinM;
           g->Uy =  MaxN;
 
-          Width  = MaxM - MinM + 1;
-          Height = MaxN - MinN + 1;
+          g->UWidth  = MaxM - MinM + 1;
+          g->UHeight = MaxN - MinN + 1;
           break;
 
         case GF_BOC1:
           f->File->Seek(1, SEEK_CUR);
 
-          Width = ReadInt(f->File, 1);
-          g->Ux = Width - ReadInt(f->File, 1);
+          g->UWidth = ReadInt(f->File, 1);
+          g->Ux     = g->UWidth - ReadInt(f->File, 1);
 
-          Width++;
+          g->UWidth++;
 
-          Height = ReadInt(f->File, 1) + 1;
-          g->Uy  = ReadInt(f->File, 1);
+          g->UHeight = ReadInt(f->File, 1) + 1;
+          g->Uy      = ReadInt(f->File, 1);
           break;
 
         default:
@@ -146,11 +145,11 @@ static void ReadChar(Font *f, wchar c)
     }
     PaintSwitch = 0;
 
-    if(!(g->UBitMap = new BBitmap(
-                            BRect(0.0, 0.0,
-                                  (float)((Width + BITS_PER_UNIT - 1) & ~(BITS_PER_UNIT - 1)) - 1.0,
-                                  (float)Height - 1.0),
-                            B_MONOCHROME_1_BIT)))
+    if (!(g->UBitMap = new BBitmap(
+                             BRect(0.0, 0.0,
+                                   (float)((g->UWidth + BITS_PER_UNIT - 1) & ~(BITS_PER_UNIT - 1)) - 1.0,
+                                   (float)g->UHeight - 1.0),
+                             B_MONOCHROME_1_BIT)))
       return;
 
     BaseP      = (BitmapUnit *)g->UBitMap->Bits();
@@ -160,24 +159,24 @@ static void ReadChar(Font *f, wchar c)
     NewRow     = false;
     WordWeight = BITS_PER_UNIT;
 
-    bzero(g->UBitMap->Bits(), g->UBitMap->BitsLength());
+    memset(g->UBitMap->Bits(), 0, g->UBitMap->BitsLength());
 
-    while(true)
+    while (true)
     {
       Count = -1;
 
       Cmd = ReadInt(f->File, 1);
 
-      if(Cmd < 64)
+      if (Cmd < 64)
         Count = Cmd;
-      else if(Cmd > GF_NewRow0 && Cmd <= GF_NewRowMax)
+      else if (Cmd > GF_NewRow0 && Cmd <= GF_NewRowMax)
       {
         Count       = Cmd - GF_NewRow0;
         PaintSwitch = 0;
         NewRow      = true;
       }
       else
-        switch(Cmd)
+        switch (Cmd)
         {
           case GF_Paint1:
           case GF_Paint2:
@@ -215,33 +214,33 @@ static void ReadChar(Font *f, wchar c)
           default:
             return;
         }
-      if(NewRow)
+      if (NewRow)
       {
         BaseP     += UnitsWide;
         cp         = BaseP;
         WordWeight = BITS_PER_UNIT;
         NewRow     = false;
       }
-      if(Count >= 0)
+      if (Count >= 0)
       {
-        while(Count)
-          if(Count <= WordWeight)
+        while (Count)
+          if (Count <= WordWeight)
           {
 #ifndef MSB_FIRST
-            if(PaintSwitch)
+            if (PaintSwitch)
               *cp |= BitMasks[Count] << (BITS_PER_UNIT - WordWeight);
 #endif
             WordWeight -= Count;
 
 #ifdef MSB_FIRST
-            if(PaintSwitch)
+            if (PaintSwitch)
               *cp |= BitMasks[Count] << WordWeight;
 #endif
             break;
           }
           else
           {
-            if(PaintSwitch)
+            if (PaintSwitch)
 #ifdef MSB_FIRST
               *cp |= BitMasks[WordWeight];
 #else
@@ -269,45 +268,44 @@ static void ReadChar(Font *f, wchar c)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// bool ReadGFIndex(DVI *doc, Font *f)                                                                            //
+// bool ReadGFIndex(Font *f)                                                                                      //
 //                                                                                                                //
 // Reads general information from a font-file.                                                                    //
 //                                                                                                                //
-// DVI  *doc                            document the font appears in                                              //
 // Font *f                              font                                                                      //
 //                                                                                                                //
 // Result:                              `true' if successful, otherwise `false'                                   //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool ReadGFIndex(DVI * /* doc */, Font *f)
+bool ReadGFIndex(Font *f)
 {
   int32  hppp, vppp;
-  u_char c, Cmd;
+  uchar  c, Cmd;
   Glyph  *g;
   long   CheckSum;
 
   f->File->Seek(-4, SEEK_END);
 
-  while(ReadInt(f->File, 4) != ((u_long)GF_Trailer << 24 | GF_Trailer << 16 | GF_Trailer << 8 | GF_Trailer))
+  while (ReadInt(f->File, 4) != ((ulong)GF_Trailer << 24 | GF_Trailer << 16 | GF_Trailer << 8 | GF_Trailer))
     f->File->Seek(-5, SEEK_CUR);
 
   f->File->Seek(-5, SEEK_CUR);
 
-  for(c = ReadInt(f->File, 1); c == GF_Trailer; f->File->Seek(-2, SEEK_CUR))
+  for (c = ReadInt(f->File, 1); c == GF_Trailer; f->File->Seek(-2, SEEK_CUR))
     ;
 
-  if(c != GF_ID)
+  if (c != Font::GF_ID)
     return false;
 
   f->File->Seek(-6, SEEK_CUR);
 
-  if(ReadInt(f->File, 1) != GF_PostPost)
+  if (ReadInt(f->File, 1) != GF_PostPost)
     return false;
 
   f->File->Seek(ReadSInt(f->File, 4), SEEK_SET);
 
-  if(ReadInt(f->File, 1) != GF_Post)
+  if (ReadInt(f->File, 1) != GF_Post)
     return false;
 
   f->File->Seek(8, SEEK_CUR);
@@ -319,10 +317,10 @@ bool ReadGFIndex(DVI * /* doc */, Font *f)
 
   f->File->Seek(16, SEEK_CUR);
 
-  if(!(f->Glyphs = new Glyph[256]))
+  if (!(f->Glyphs = new Glyph[256]))
     return false;
 
-  while((Cmd = ReadInt(f->File, 1)) != GF_PostPost)
+  while ((Cmd = ReadInt(f->File, 1)) != GF_PostPost)
   {
     long Addr;
 
@@ -330,7 +328,7 @@ bool ReadGFIndex(DVI * /* doc */, Font *f)
 
     g = &f->Glyphs[c];
 
-    switch(Cmd)
+    switch (Cmd)
     {
       case GF_CharLoc:
         f->File->Seek(8, SEEK_CUR);
@@ -345,7 +343,7 @@ bool ReadGFIndex(DVI * /* doc */, Font *f)
     }
     g->Advance = f->DimConvert * ReadSInt(f->File, 4);
 
-    if((Addr = ReadInt(f->File, 4)) != -1)
+    if ((Addr = ReadInt(f->File, 4)) != -1)
       g->Addr = Addr;
   }
 

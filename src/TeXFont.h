@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: TeXFont.h,v 2.3 1998/08/20 11:16:26 achim Exp $
+// $Id: TeXFont.h,v 2.6 1999/07/22 13:36:46 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -22,8 +22,8 @@
 #ifndef LIST_H
 #include "list.h"
 #endif
-#ifndef DVI_H
-#include "DVI.h"
+#ifndef DVI_DRAWPAGE_H
+#include "DVI-DrawPage.h"
 #endif
 #ifndef FONTLIST_H
 #include "FontList.h"
@@ -56,14 +56,14 @@ class Glyph
 
     long    Addr;
     long    Advance;
-    short   Ux, Uy;         // unshrunken
+    short   Ux, Uy, UWidth, UHeight;         // unshrunken
     BBitmap *UBitMap;
-    short   Sx, Sy;         // shrunken
+    short   Sx, Sy, SWidth, SHeight;         // shrunken
     BBitmap *SBitMap;
     int     FlagByte;
 
   private:
-    static u_char *ColourTable[MaxShrinkFactor + 1];
+    static uchar *ColourTable[MaxShrinkFactor + 1];
 
   public:
     Glyph();
@@ -80,40 +80,28 @@ class Glyph
 class Macro
 {
   public:
-    u_char *Position;
-    u_char *End;
-    long   Advance;
-    bool   FreeMe;
+    uchar *Position;
+    uchar *End;
+    long  Advance;
+    bool  FreeMe;
 };
-
-#ifdef __MWERKS__
-static const u_char  PK_Preamble = 247;
-static const u_char  PK_ID       = 89;
-static const u_short PK_Magic    = (PK_Preamble << 8) | PK_ID;
-static const u_char  GF_Preamble = 247;
-static const u_char  GF_ID       = 131;
-static const u_short GF_Magic    = (PK_Preamble << 8) | PK_ID;
-static const u_char  VF_Preamble = 247;
-static const u_char  VF_ID       = 202;
-static const u_short VF_Magic    = (PK_Preamble << 8) | PK_ID;
-#endif
 
 class Font
 {
-  private:
-#ifndef __MWERKS__
-    static const u_char  PK_Preamble = 247;
-    static const u_char  PK_ID       = 89;
-    static const u_short PK_Magic    = (PK_Preamble << 8) | PK_ID;
-    static const u_char  GF_Preamble = 247;
-    static const u_char  GF_ID       = 131;
-    static const u_short GF_Magic    = (PK_Preamble << 8) | PK_ID;
-    static const u_char  VF_Preamble = 247;
-    static const u_char  VF_ID       = 202;
-    static const u_short VF_Magic    = (PK_Preamble << 8) | PK_ID;
-#endif
-
   public:
+    enum
+    {
+      PK_Preamble = 247,
+      PK_ID       = 89,
+      PK_Magic    = (PK_Preamble << 8) | PK_ID,
+      GF_Preamble = 247,
+      GF_ID       = 131,
+      GF_Magic    = (GF_Preamble << 8) | GF_ID,
+      VF_Preamble = 247,
+      VF_ID       = 202,
+      VF_Magic    = (VF_Preamble << 8) | VF_ID
+    };
+
     BPositionIO  *File;
     long         UseCount;
     char         *Name;      // name of the font
@@ -122,8 +110,8 @@ class Font
     int          MagStep;    // 2*magstepnumber or `NoMagStep'
     double       DimConvert; // size conversion faktor
     wchar        MaxChar;    // largest character code
-    u_char       Loaded:1;
-    u_char       Virtual:1;
+    uchar        Loaded:1;
+    uchar        Virtual:1;
     SetCharProc  SetChar;    // procedure to set a character
 
     // Raster Fonts
@@ -141,11 +129,11 @@ class Font
     char         *Buffer;    // buffer the font file is stored in
 
   public:
-            Font(DVI *doc, const char *name = NULL, float size = 0.0, long chksum = 0, int magstep = 0,
-                 double dimconvert = 0.0);
+            Font(const DVI *doc, const DrawSettings *Settings, const char *name = NULL, float size = 0.0, long chksum = 0,
+                 int magstep = 0, double dimconvert = 0.0);
     virtual ~Font();
 
-    bool Load(DVI *doc);
+    bool Load(const DVI *doc, const DrawSettings *Settings);
     void FlushShrinkedGlyphes();
 
   private:
@@ -153,8 +141,8 @@ class Font
     void ReallocFont(wchar num) throw(bad_alloc);
 };
 
-bool ReadPKIndex(DVI *doc, Font *f);
-bool ReadGFIndex(DVI *doc, Font *f);
-bool ReadVFIndex(DVI *doc, Font *f);
+bool ReadPKIndex(Font *f);
+bool ReadGFIndex(Font *f);
+bool ReadVFIndex(const DVI *doc, const DrawSettings *Settings, Font *f);
 
 #endif

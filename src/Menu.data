@@ -5,11 +5,14 @@ About…,         ?
 Open…,          O
 Load…,          L
 Reload,         R
+Save Page…,
 Quit,           Q
 Display,
 Anti Aliasing,  A
 Border Line,    B
+Measure Window, M
 Move,
+Search,         F
 First Page,     <
 Last Page,      >
 Next Page,      +

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: DVI-Window.cc,v 2.3 1998/08/20 11:16:11 achim Exp $
+// $Id: DVI-Window.cc,v 2.6 1999/07/22 13:36:39 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -12,9 +12,11 @@
 
 #include <Application.h>
 #include <InterfaceKit.h>
+#include <TranslationKit.h>
 #include <stdio.h>
 #include <string.h>
 #include <Debug.h>
+#include <memory>
 #include "BeDVI.h"
 #include "DVI-View.h"
 #include "log.h"
@@ -30,10 +32,12 @@ class ViewWindow: public BWindow
             ViewWindow(BRect frame);
     virtual ~ViewWindow();
 
-    virtual bool QuitRequested();
-    virtual void MessageReceived(BMessage *msg);
-    virtual void DispatchMessage(BMessage *message, BHandler *handler);
-    virtual void WindowActivated(bool active);
+    virtual bool     QuitRequested();
+    virtual void     MessageReceived(BMessage *msg);
+    virtual void     DispatchMessage(BMessage *message, BHandler *handler);
+    virtual BHandler *ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form, const char *property);
+    virtual status_t GetSupportedSuites(BMessage *message);
+    virtual void     WindowActivated(bool active);
 
   private:
     void         LoadFile(entry_ref *File);
@@ -46,28 +50,32 @@ class ViewWindow: public BWindow
 //                                                                                                                //
 // ViewWindow::ViewWindow(BRect frame)                                                                            //
 //                                                                                                                //
-// Initializes a window (see the BeBook).                                                                         //                                                                                              //
+// Initializes a window (see the BeBook).                                                                         //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ViewWindow::ViewWindow(BRect frame): BWindow(frame, "BeDVI " VERSION, B_DOCUMENT_WINDOW, 0)
+ViewWindow::ViewWindow(BRect frame):
+  BWindow(frame, "BeDVI " VERSION, B_DOCUMENT_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL, B_ASYNCHRONOUS_CONTROLS)
 {
-  atomic_add(&((ViewApplication *)be_app)->NumWindows, 1);
+  ((ViewApplication *)be_app)->AddDocWindow(this);
+  ((ViewApplication *)be_app)->ActiveWindow = this;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
 // ViewWindow::~ViewWindow()                                                                                      //
 //                                                                                                                //
-// Stores the window bounds.                                                                                      //                                                                                              //
+// Stores the window bounds.                                                                                      //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ViewWindow::~ViewWindow()
 {
+  ((ViewApplication *)be_app)->RemoveDocWindow(this);
+
   ((ViewApplication *)be_app)->WindowBounds = Frame();
 
-  if(atomic_add(&((ViewApplication *)be_app)->NumWindows, -1) <= 1)
+  if (((ViewApplication *)be_app)->NumDocWindows() <= 0)
     be_app->PostMessage(B_QUIT_REQUESTED);
 }
 
@@ -100,17 +108,22 @@ void ViewWindow::MessageReceived(BMessage *msg)
               ((char *)&msg->what)[0], ((char *)&msg->what)[1],
               ((char *)&msg->what)[2], ((char *)&msg->what)[3], msg->what);
 
-    switch(msg->what)
+    switch (msg->what)
     {
       case B_ABOUT_REQUESTED:
       case MsgOpenPanel:
       case MsgOpenFile:
       case MsgMeasureWin:
+      case MsgNextWindow:
+      case MsgPrevWindow:
         be_app->PostMessage(msg);
         break;
 
+      case MsgSearchWin:
       case MsgLoadPanel:
-        ((ViewApplication *)be_app)->LaunchFilePanel(this);
+      case MsgSavePanel:
+        if (msg->AddPointer("Window", this) == B_OK)
+          be_app->PostMessage(msg);
         break;
 
       case MsgLoadFile:
@@ -119,9 +132,41 @@ void ViewWindow::MessageReceived(BMessage *msg)
 
         ((ViewApplication *)be_app)->CloseFilePanel();
 
-        if(msg->HasRef("refs"))
-          if(msg->FindRef("refs", File) >= B_NO_ERROR)
+        if (msg->HasRef("refs"))
+          if (msg->FindRef("refs", File) >= B_OK)
             LoadFile(File);
+        break;
+      }
+      case MsgSavePage:
+      {
+        entry_ref Directory;
+        char      *FileName;
+        uint32    Translator;
+        uint32    Type;
+
+        ((ViewApplication *)be_app)->CloseFilePanel();
+
+        if (msg->FindString("name",          &FileName)            != B_OK ||
+            msg->FindRef(   "directory",     &Directory)           != B_OK ||
+            msg->FindInt32( "be:translator", (int32 *)&Translator) != B_OK ||
+            msg->FindInt32( "be:type",       (int32 *)&Type)       != B_OK)
+        {
+          log_warn("invlaid message received!");
+          break;
+        }
+
+        BDirectory dir(&Directory);
+        BFile      File;
+
+        if (dir.InitCheck()                 != B_OK ||
+            dir.CreateFile(FileName, &File) != B_OK)
+        {
+          log_warn("can't create file!");
+          break;
+        }
+
+        vw->SavePage(&File, Translator, Type);
+
         break;
       }
 
@@ -142,12 +187,14 @@ void ViewWindow::MessageReceived(BMessage *msg)
       case MsgPrev:
       case MsgFirst:
       case MsgLast:
+      case MsgSearchForwards:
+      case MsgSearchBackwards:
         vw->MessageReceived(msg);
         break;
 
       case MsgPage:
       {
-        u_long no = 1;
+        ulong no = 1;
 
         Lock();
 
@@ -160,10 +207,10 @@ void ViewWindow::MessageReceived(BMessage *msg)
         break;
       }
       default:
-        if(msg->what <= 15)                                             // shrink factor
-          vw->SetShrinkFactor((u_short)msg->what);
+        if (msg->what <= 15)                                             // shrink factor
+          vw->SetShrinkFactor((ushort)msg->what);
 
-        else if(msg->what < 0x10000)                                    // resolution
+        else if (msg->what < 0x10000)                                    // resolution
           ((ViewApplication *)be_app)->SetResolution(msg->what);
 
         else
@@ -193,10 +240,47 @@ void ViewWindow::MessageReceived(BMessage *msg)
 
 void ViewWindow::DispatchMessage(BMessage *message, BHandler *handler)
 {
-  if(message->what == B_MOUSE_UP)
+  if (message->what == B_MOUSE_UP)
     MessageReceived(message);
   else
     inherited::DispatchMessage(message, handler);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// BHandler *ViewWindow::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form,            //
+//                                        const char *property)                                                   //
+//                                                                                                                //
+// Resolves scripting specifiers.                                                                                 //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BHandler *ViewWindow::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form, const char *property)
+{
+  if (strcmp(property, "Page")    == 0 ||
+      strcmp(property, "IncPage") == 0 ||
+      strcmp(property, "Shrink")  == 0)
+    return vw;
+
+  return inherited::ResolveSpecifier(msg, index, specifier, form, property);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// status_t ViewWindow::GetSupportedSuites(BMessage *message)                                                     //
+//                                                                                                                //
+// Returns the scripting suites supported by the window.                                                          //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+status_t ViewWindow::GetSupportedSuites(BMessage *message)
+{
+  BPropertyInfo prop_info(vw->PropertyList);
+
+  message->AddString("suites",   "suite/vnd.blume-DVIView");
+  message->AddFlat(  "messages", &prop_info);
+
+  return inherited::GetSupportedSuites(message);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -209,9 +293,12 @@ void ViewWindow::DispatchMessage(BMessage *message, BHandler *handler)
 
 void ViewWindow::WindowActivated(bool active)
 {
-  if(((ViewApplication *)be_app)->MeasureWinOpen)
+  if (active)
+    ((ViewApplication *)be_app)->ActiveWindow = this;
+
+  if (((ViewApplication *)be_app)->MeasureWinOpen)
   {
-    if(active)
+    if (active)
     {
       BPoint p;
       uint32 b;
@@ -247,7 +334,7 @@ void ViewWindow::LoadFile(entry_ref *File)
     args[0] = this;
     args[1] = File;
 
-    if((tid = spawn_thread(LoadFileThread, "load file", B_NORMAL_PRIORITY, args)) < B_OK)
+    if ((tid = spawn_thread(LoadFileThread, "load file", B_NORMAL_PRIORITY, args)) < B_OK)
     {
       delete args;
       return;
@@ -293,8 +380,8 @@ int32 ViewWindow::LoadFileThread(void *args)
   {
     f = new BFile(File, O_RDONLY);
 
-    if(f->InitCheck() != B_OK)
-      throw(exception("can't open file"));
+    if (f->InitCheck() != B_OK)
+      throw(runtime_error("can't open file"));
 
     ((ViewApplication *)be_app)->SetSleepCursor();
 
@@ -302,19 +389,26 @@ int32 ViewWindow::LoadFileThread(void *args)
 
     f = NULL;        // f belongs to NewDocument now
 
-    if(!NewDocument->Ok())
-      throw(exception("can't load file"));
+    if (!NewDocument->Ok())
+      throw(runtime_error("can't load file"));
+
+    BEntry e(File);
+    BPath  path;
+
+    if (e.GetParent(&e)  == B_OK &&
+        e.GetPath(&path) == B_OK)
+      NewDocument->Directory.assign(path.Path());
 
     // set icon if not already done
     try
     {
       f = new BFile(File, O_RDWR);
 
-      if(f->InitCheck() == B_OK)
+      if (f->InitCheck() == B_OK)
       {
         ni = new BNodeInfo(f);
 
-        if(ni->GetType(Buffer) != B_OK                     ||
+        if (ni->GetType(Buffer) != B_OK                    ||
            strcmp(Buffer, "application/octet-stream") == 0 ||
            Buffer[0] == 0)
           ni->SetType("application/x-dvi");
@@ -331,11 +425,18 @@ int32 ViewWindow::LoadFileThread(void *args)
     f  = NULL;
     ni = NULL;
 
-    win->vw->SetDocument(NewDocument);
+    if (win->Lock())
+    {
+      win->vw->SetDocument(NewDocument);
 
-    win->SetTitle(File->name);
+      win->SetTitle(File->name);
 
-    ((ViewApplication *)be_app)->NoDocLoaded = false;
+      ((ViewApplication *)be_app)->NoDocLoaded = false;
+
+      win->Unlock();
+    }
+    else
+      delete NewDocument;
   }
   catch(const exception &e)
   {
@@ -377,34 +478,48 @@ int32 ViewWindow::LoadFileThread(void *args)
 
 static BMenuBar *InitMenu()
 {
+  const ViewApplication::MenuDef *def;
   BMenuBar  *MenuBar = NULL;
   BMenu     *Menu    = NULL;
   BMenuItem *Item    = NULL;
-  u_int     no = 0;
-  u_int     i, j;
+  uint      i, j;
 
   try
   {
-    if(!(MenuBar = new BMenuBar(BRect(0, 0, 0, 0), "Menu")))
-      return NULL;
+    MenuBar = new BMenuBar(BRect(0, 0, 0, 0), "Menu");
 
-    for(i = 0; i < ((ViewApplication *)be_app)->NumMenus; i++)
+    def = ((ViewApplication *)be_app)->MenuDefs;
+
+    for (i = 0; i < ((ViewApplication *)be_app)->NumMenus; i++)
     {
-      if(!(Menu = new BMenu(((ViewApplication *)be_app)->MenuDefs[no++].Name)))
-        return NULL;
+      Menu = new BMenu(def->Name);
       MenuBar->AddItem(Menu);
+      def++;
 
-      for(j = 0; j < ((ViewApplication *)be_app)->NumSubMenus[i]; j++)
+      for (j = 0; j < ((ViewApplication *)be_app)->NumSubMenus[i]; j++)
       {
-        if(!(Item = new BMenuItem(((ViewApplication *)be_app)->MenuDefs[no].Name,
-                                  new BMessage(((ViewApplication *)be_app)->MenuDefs[no].Message),
-                                  ((ViewApplication *)be_app)->MenuDefs[no].Shortcut)))
-          return NULL;
+        if (def->Message == MsgSavePanel)
+        {
+          BMessage ModelMsg(MsgSavePanel);
+
+          auto_ptr<BMenu> SubMenu(new BMenu(def->Name));
+
+          if (BTranslationUtils::AddTranslationItems(SubMenu.get(), B_TRANSLATOR_BITMAP, &ModelMsg) != B_OK)
+            throw (runtime_error("can't create menu"));
+
+          Item = new BMenuItem(SubMenu.release());
+        }
+        else
+          Item = new BMenuItem(def->Name, new BMessage(def->Message), def->Shortcut);
 
         Menu->AddItem(Item);
-        no++;
+
+        if (!def->TargetIsWindow)
+          Item->SetTarget(be_app);
+
+        def++;
       }
-      if(((ViewApplication *)be_app)->RadioModeMenu[i])
+      if (((ViewApplication *)be_app)->RadioModeMenu[i])
         Menu->SetRadioMode(true);
     }
   }
@@ -460,7 +575,7 @@ BWindow *OpenWindow()
 
     // create menu
 
-    if(!(Menu = InitMenu()))
+    if (!(Menu = InitMenu()))
     {
       win->Quit();
       return NULL;
@@ -483,7 +598,7 @@ BWindow *OpenWindow()
 
     vw = new DVIView(r, "DVI-View");
 
-    if(!vw->Ok())
+    if (!vw->Ok())
     {
       delete vw;
       win->Quit();
@@ -509,8 +624,8 @@ BWindow *OpenWindow()
 
     PageNo->SetTarget(win);
     PageNo->SetAlignment(B_ALIGN_LEFT, B_ALIGN_RIGHT);
-    PageNo->SetLowColor(219, 219, 219);
-    PageNo->SetViewColor(219, 219, 219);
+    PageNo->SetLowColor(ui_color(B_MENU_BACKGROUND_COLOR));
+    PageNo->SetViewColor(ui_color(B_MENU_BACKGROUND_COLOR));
 
     BFont font(be_fixed_font);
     font.SetSize(MenuR.Height() - 5);
@@ -536,7 +651,7 @@ BWindow *OpenWindow()
     log_error("%s!", e.what());
     log_debug("at %s:%d", __FILE__, __LINE__);
 
-    if(win)
+    if (win)
       win->Quit();
     win = NULL;
   }
@@ -545,7 +660,7 @@ BWindow *OpenWindow()
     log_error("unknown exception!");
     log_debug("at %s:%d", __FILE__, __LINE__);
 
-    if(win)
+    if (win)
       win->Quit();
     win = NULL;
   }

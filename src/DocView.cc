@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: DocView.cc,v 2.0 1997/10/12 10:21:14 achim Exp $
+// $Id: DocView.cc,v 2.2 1999/07/22 13:36:40 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -43,7 +43,7 @@ void DocView::FrameResized(float /* Width */, float /* Height */)
 
 void DocView::UpdateScrollBars()
 {
-  if(DocWidth <= 0)
+  if (DocWidth <= 0)
   {
     ScrollBar(B_VERTICAL)->SetRange(0, 0);
     ScrollBar(B_HORIZONTAL)->SetRange(0, 0);
@@ -80,7 +80,7 @@ void DocView::UpdateWindowSize()
   int   WinWidth,  WinHeight;
   int   ViewWidth, ViewHeight;
 
-  if(DocWidth > 0)
+  if (DocWidth > 0)
   {
     r1 = Window()->Bounds();
     r2 = Bounds();
@@ -97,7 +97,7 @@ void DocView::UpdateWindowSize()
 
     Window()->GetSizeLimits(&r2.left, &r2.right, &r2.top, &r2.bottom);
 
-    if(r2.right < r1.right || r2.bottom < r1.bottom)
+    if (r2.right < r1.right || r2.bottom < r1.bottom)
       Window()->ResizeTo(min_c(r1.right, r2.right) - r1.left + 1.0, min_c(r1.bottom, r2.bottom) - r1.top + 1.0);
   }
 }
@@ -112,13 +112,13 @@ void DocView::UpdateWindowSize()
 
 void DocView::UpdateWindow()
 {
-  if(Window()->Lock())
+  if (LockLooper())
   {
     UpdateWindowSize();
     UpdateScrollBars();
     Invalidate();
 
-    Window()->Unlock();
+    UnlockLooper();
   }
 }
 

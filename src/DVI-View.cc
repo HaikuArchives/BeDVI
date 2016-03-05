@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: DVI-View.cc,v 2.3 1998/08/20 11:16:08 achim Exp $
+// $Id: DVI-View.cc,v 2.6 1999/07/22 13:36:38 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -11,6 +11,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <InterfaceKit.h>
+#include <TranslationKit.h>
 #include <stdio.h>
 #include <string.h>
 #include <Debug.h>
@@ -34,6 +35,7 @@ DVIView::DVIView(BRect rect, const char *Name):
   DocView(rect, Name),
   DocLock(B_ERROR),
   Document(NULL),
+  Settings(((ViewApplication *)be_app)->Settings),
   BufferLock(B_ERROR),
   Buffer(NULL),
   BufferView(NULL),
@@ -42,17 +44,16 @@ DVIView::DVIView(BRect rect, const char *Name):
   ShowMagnify(false),
   PageNo(1)
 {
-  if((DocLock = create_sem(1, "document")) < B_NO_ERROR)
-    throw(exception("can't create semaphore"));
+  if ((DocLock = create_sem(1, "document")) < B_OK)
+    throw(runtime_error("can't create semaphore"));
 
-  if((BufferLock = create_sem(1, "buffer")) < B_NO_ERROR)
-    throw(exception("can't create semaphore"));
+  if ((BufferLock = create_sem(1, "buffer")) < B_OK)
+    throw(runtime_error("can't create semaphore"));
 
   BufferView = new BView(BRect(0, 0, 1, 1), NULL, 0, 0);
 
   SetViewColor(B_TRANSPARENT_32_BIT);
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
@@ -64,12 +65,9 @@ DVIView::DVIView(BRect rect, const char *Name):
 
 DVIView::~DVIView()
 {
-  if(DocLock >= B_NO_ERROR)
+  if (DocLock >= B_OK)
   {
     acquire_sem(DocLock);
-
-    if(Document)
-      ((ViewApplication *)be_app)->Settings = Document->Settings;
 
     delete Document;
     
@@ -78,11 +76,11 @@ DVIView::~DVIView()
   else
     delete Document;
 
-  if(BufferLock >= B_NO_ERROR)
+  if (BufferLock >= B_OK)
   {
     acquire_sem(BufferLock);
 
-    if(Buffer)
+    if (Buffer)
       delete Buffer;
     else                    // deleted automatically if BBitmap is deleted
       delete BufferView;
@@ -91,11 +89,13 @@ DVIView::~DVIView()
   }
   else
   {
-    if(Buffer)
+    if (Buffer)
       delete Buffer;
     else                    // deleted automatically if BBitmap is deleted
       delete BufferView;
   }
+
+  ((ViewApplication *)be_app)->Settings = Settings;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -108,27 +108,27 @@ DVIView::~DVIView()
 
 void DVIView::Draw(BRect r)
 {
-  if(IsPrinting())
+  if (IsPrinting())
   {
     PrintPage(PageNo);
     return;
   }
 
-  if(Buffer != NULL && acquire_sem_etc(BufferLock, 1, B_TIMEOUT, 0.0) == B_OK)
+  if (Buffer != NULL && acquire_sem_etc(BufferLock, 1, B_TIMEOUT, 0) == B_OK)
   {
     DrawBitmapAsync(Buffer, r, r);
 
-    if(ShowMagnify && MagnifyBuffer)
+    if (ShowMagnify && MagnifyBuffer)
       DrawBitmapAsync(MagnifyBuffer, BPoint(MousePos.x - MagnifyWinSize, MousePos.y - MagnifyWinSize));
 
     release_sem(BufferLock);
 
-    if(((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
+    if (((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
     {
       SetDrawingMode(B_OP_INVERT);
-      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-      StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
-      SetDrawingMode(B_OP_COPY);    
+      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+      StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
+      SetDrawingMode(B_OP_COPY);
     }
   }
   else
@@ -145,21 +145,21 @@ void DVIView::Draw(BRect r)
 
 void DVIView::MessageReceived(BMessage *msg)
 {
-  if(msg->WasDropped() && msg->HasRef("refs"))
+  if (msg->WasDropped() && msg->HasRef("refs"))
   {
     msg->what = MsgLoadFile;
 
     Window()->MessageReceived(msg);
   }
   else
-    switch(msg->what)
+    switch (msg->what)
     {
       case MsgReload:
         Reload();
         break;
 
       case MsgPrintPage:
-        if(Document)
+        if (Document)
         {
           BPrintJob pj("page");
 
@@ -173,14 +173,29 @@ void DVIView::MessageReceived(BMessage *msg)
 
           pj.DrawView(this,
                       BRect(0, 0,
-                            72.0 / Document->Settings.DspInfo.PixelsPerInch * Document->UnshrunkPageWidth  - 1,
-                            72.0 / Document->Settings.DspInfo.PixelsPerInch * Document->UnshrunkPageHeight - 1),
+                            72.0 / Settings.DspInfo.PixelsPerInch * Document->UnshrunkPageWidth  - 1,
+                            72.0 / Settings.DspInfo.PixelsPerInch * Document->UnshrunkPageHeight - 1),
                       origin);
 
           pj.SpoolPage();
           pj.CommitJob();
         }
         break;
+
+      case MsgSearchForwards:
+      case MsgSearchBackwards:
+      {
+        char *str;
+
+        if (msg->FindString("Search Text", &str) != B_OK)
+        {
+          log_warn("invalide message received!");
+          break;
+        }
+
+        Search(str, (msg->what == MsgSearchForwards));
+        break;
+      }
       case MsgAntiAliasing:
         ToggleAntiAliasing();
         break;
@@ -190,11 +205,11 @@ void DVIView::MessageReceived(BMessage *msg)
         break;
 
       case MsgNext:
-        IncPage();
+        SetPage(PageNo + 1);
         break;
 
       case MsgPrev:
-        DecPage();
+        SetPage(PageNo - 1);
         break;
 
       case MsgFirst:
@@ -202,14 +217,22 @@ void DVIView::MessageReceived(BMessage *msg)
         break;
 
       case MsgLast:
-        SetPage(0xffffffff);
+        SetPage(INT_MAX);
+        break;
+
+      case B_GET_PROPERTY:
+        GetProperty(msg);
+        break;
+
+      case B_SET_PROPERTY:
+        SetProperty(msg);
         break;
 
       case B_MOUSE_UP:
       {
         BPoint p;
 
-        if(msg->FindPoint("where", &p) == B_OK)
+        if (msg->FindPoint("where", &p) == B_OK)
           MouseUp(p);
         break;
       }
@@ -218,6 +241,8 @@ void DVIView::MessageReceived(BMessage *msg)
         break;
     }
 }
+
+// input
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
@@ -229,40 +254,40 @@ void DVIView::MessageReceived(BMessage *msg)
 
 void DVIView::KeyDown(const char *bytes, int32 numBytes)
 {
-  BRect  r;
-  u_long w,h;
-  float  MaxX, MaxY;
-  float  Factor;
+  BRect r;
+  ulong w,h;
+  float MaxX, MaxY;
+  float Factor;
 
-  if(!Document)
+  if (!Document)
     return;
 
   r    = Bounds();
-  w    = Document->PageWidth;
-  h    = Document->PageHeight;
+  w    = DocWidth;
+  h    = DocHeight;
   MaxX = w - r.right  + r.left - 1.0;
   MaxY = h - r.bottom + r.top  - 1.0;
 
   Factor = 1.0 / 20.0;
 
-  if(modifiers() & B_SHIFT_KEY)
+  if (modifiers() & B_SHIFT_KEY)
     Factor *= 4.0;
-  if(modifiers() & B_OPTION_KEY)
+  if (modifiers() & B_OPTION_KEY)
     Factor *= 0.25;
 
-  switch(bytes[0])
+  switch (bytes[0])
   {
     case B_PAGE_DOWN:
     case B_SPACE:
-      if(modifiers() & B_SHIFT_KEY)
-        IncPage();
+      if (modifiers() & B_SHIFT_KEY)
+        SetPage(PageNo + 1);
       else
       {
-        if(r.top < MaxY)
+        if (r.top < MaxY)
           ScrollTo(r.left, min_c(r.bottom - 20.0, MaxY));
         else
         {
-          if(IncPage())
+          if (SetPage(PageNo + 1))
             ScrollTo(r.left, 0.0);
         }
       }
@@ -270,51 +295,51 @@ void DVIView::KeyDown(const char *bytes, int32 numBytes)
 
     case B_PAGE_UP:
     case B_BACKSPACE:
-      if(modifiers() & B_SHIFT_KEY)
-        DecPage();
+      if (modifiers() & B_SHIFT_KEY)
+        SetPage(PageNo - 1);
       else
       {
-        if(r.top > 0.0)
+        if (r.top > 0.0)
           ScrollTo(r.left, max_c(2 * r.top - r.bottom + 20.0, 0.0));
         else
         {
-          if(DecPage())
+          if (SetPage(PageNo - 1))
             ScrollTo(r.left, MaxY);
         }
       }
       break;
 
     case B_HOME:
-      if(modifiers() & B_SHIFT_KEY)
+      if (modifiers() & B_SHIFT_KEY)
         SetPage(1);
       else
         ScrollTo(r.left, 0.0);
       break;
 
     case B_END:
-      if(modifiers() & B_SHIFT_KEY)
-        SetPage(~0L);
+      if (modifiers() & B_SHIFT_KEY)
+        SetPage(INT_MAX);
       else
         ScrollTo(r.left, MaxY);
       break;
 
     case B_DOWN_ARROW:
     case B_RETURN:
-      if(r.top < MaxY)
+      if (r.top < MaxY)
         ScrollTo(r.left, min_c(r.top + Factor * h, MaxY));
       else
       {
-        if(IncPage())
+        if (SetPage(PageNo + 1))
           ScrollTo(r.left, 0.0);
       }
       break;
 
     case B_UP_ARROW:
-      if(r.top > 0.0)
+      if (r.top > 0.0)
         ScrollTo(r.left, max_c(r.top - Factor * h, 0.0));
       else
       {
-        if(DecPage())
+        if (SetPage(PageNo - 1))
           ScrollTo(r.left, MaxY);
       }
       break;
@@ -328,11 +353,11 @@ void DVIView::KeyDown(const char *bytes, int32 numBytes)
       break;
 
     case '+':
-      IncPage();
+      SetPage(PageNo + 1);
       break;
 
     case '-':
-      DecPage();
+      SetPage(PageNo - 1);
       break;
 
     case '<':
@@ -340,7 +365,7 @@ void DVIView::KeyDown(const char *bytes, int32 numBytes)
       break;
 
     case '>':
-      SetPage(~0L);
+      SetPage(INT_MAX);
       break;
 
     case '*':
@@ -416,22 +441,22 @@ void DVIView::KeyDown(const char *bytes, int32 numBytes)
 
 void DVIView::MouseDown(BPoint where)
 {
-  if(!Document)
+  if (!Document)
     return;
 
-  if(((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
+  if (((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
   {
     SetDrawingMode(B_OP_INVERT);
-    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-    StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
+    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+    StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
     SetDrawingMode(B_OP_COPY);    
   }
 
   MousePos = where;
 
-  if(!ShowMagnify && Document->Settings.ShrinkFactor != 1)
+  if (!ShowMagnify && Settings.ShrinkFactor != 1)
   {
-    if(acquire_sem(DocLock) < B_NO_ERROR)
+    if (acquire_sem(DocLock) < B_OK)
       return;
 
     ShowMagnify  = true;
@@ -442,27 +467,27 @@ void DVIView::MouseDown(BPoint where)
 
     be_app->HideCursor();
 
-    if(Window()->Lock())
+    if (Window()->Lock())
     {
       Draw(BRect(MousePos.x - MagnifyWinSize, MousePos.y - MagnifyWinSize,
                  MousePos.x + MagnifyWinSize, MousePos.y + MagnifyWinSize));
       Window()->Unlock();
     }
   }
-  if(((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
+  if (((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
   {
     BMessage msg(MsgPoint);
 
-    msg.AddFloat("x", (double)MousePos.x * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
-    msg.AddFloat("y", (double)MousePos.y * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("x", (double)MousePos.x * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("y", (double)MousePos.y * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
 
     be_app->PostMessage(&msg);
 
-    if(!ShowMagnify)
+    if (!ShowMagnify)
     {
       SetDrawingMode(B_OP_INVERT);
-      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-      StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
+      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+      StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
       SetDrawingMode(B_OP_COPY);    
     }
   }
@@ -480,51 +505,52 @@ void DVIView::MouseUp(BPoint where)
 {
   uint32 buttons;
 
-  if(!Document)
+  if (!Document)
     return;
 
-  GetMouse(&where, &buttons, false);    // get currnet position
+  if (Window()->CurrentMessage()->FindInt32("buttons", (int32 *)&buttons) != B_OK)
+    return;
 
-  if(((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
+  if (((ViewApplication *)be_app)->MeasureWinOpen && !ShowMagnify && Window()->IsActive())
   {
     SetDrawingMode(B_OP_INVERT);
-    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-    StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
+    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+    StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
     SetDrawingMode(B_OP_COPY);    
   }
 
-  if(ShowMagnify)
+  if (ShowMagnify)
   {
     ShowMagnify = false;
 
     be_app->ShowCursor();
 
-    if(((ViewApplication *)be_app)->MeasureWinOpen)
+    if (((ViewApplication *)be_app)->MeasureWinOpen)
       Invalidate();
     else
-      if(Window()->Lock())
+      if (LockLooper())
       {
         Draw(BRect(MousePos.x - MagnifyWinSize, MousePos.y - MagnifyWinSize,
                    MousePos.x + MagnifyWinSize, MousePos.y + MagnifyWinSize));
-        Window()->Unlock();
+        UnlockLooper();
       }
   }
-  else if(((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
+  else if (((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
   {
     SetDrawingMode(B_OP_INVERT);
-    StrokeLine(BPoint(where.x, 0), BPoint(where.x, Document->PageHeight - 1));
-    StrokeLine(BPoint(0, where.y), BPoint(Document->PageWidth - 1, where.y));
+    StrokeLine(BPoint(where.x, 0), BPoint(where.x, DocHeight - 1));
+    StrokeLine(BPoint(0, where.y), BPoint(DocWidth - 1, where.y));
     SetDrawingMode(B_OP_COPY);    
   }
 
   MousePos = where;
 
-  if(((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
+  if (((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
   {
     BMessage msg(MsgPoint);
 
-    msg.AddFloat("x", (double)MousePos.x * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
-    msg.AddFloat("y", (double)MousePos.y * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("x", (double)MousePos.x * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("y", (double)MousePos.y * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
 
     be_app->PostMessage(&msg);
   }
@@ -542,116 +568,256 @@ void DVIView::MouseMoved(BPoint where, uint32 /* code */, const BMessage * /* ms
 {
   uint32 buttons;
 
-  if(!Document)
+  if (!Document)
     return;
 
-  if(Window()->MessageQueue()->FindMessage(B_MOUSE_MOVED, 0))      // process only the last B_MOUSE_MOVE message
+  if (Window()->MessageQueue()->FindMessage(B_MOUSE_MOVED, 0))      // process only the last B_MOUSE_MOVE message
     return;
 
-  GetMouse(&where, &buttons, false);                               // get current position
-
-  if(MousePos == where)
+  if (Window()->CurrentMessage()->FindInt32("buttons", (int32 *)&buttons) != B_OK)
     return;
 
-  if(buttons == 0)
+  if (MousePos == where)
+    return;
+
+  if (buttons == 0)
   {
     MouseUp(where);
     return;
   }
 
-  if(((ViewApplication *)be_app)->MeasureWinOpen &&
+  if (((ViewApplication *)be_app)->MeasureWinOpen &&
      Window()->IsActive())
   {
     BMessage msg(MsgPoint);
 
-    msg.AddFloat("x", (double)where.x * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
-    msg.AddFloat("y", (double)where.y * Document->Settings.ShrinkFactor / Document->Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("x", (double)where.x * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
+    msg.AddFloat("y", (double)where.y * Settings.ShrinkFactor / Settings.DspInfo.PixelsPerInch);
 
     be_app->PostMessage(&msg);
 
-    if(!ShowMagnify)
+    if (!ShowMagnify)
     {
       SetDrawingMode(B_OP_INVERT);
-      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-      StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
+      StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+      StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
       SetDrawingMode(B_OP_COPY);    
     }
   }
 
-  if(ShowMagnify)
+  if (ShowMagnify)
   {
     BRect UpdateRect(MousePos.x, MousePos.y, MousePos.x, MousePos.y);
 
     MousePos = where;
 
-    if(acquire_sem(DocLock) < B_NO_ERROR)
+    if (acquire_sem(DocLock) < B_OK)
       return;
 
     RedrawMagnifyBuffer();
 
     release_sem(DocLock);
 
-    if(UpdateRect.left   > MousePos.x)  UpdateRect.left   = MousePos.x;
-    if(UpdateRect.top    > MousePos.y)  UpdateRect.top    = MousePos.y;
-    if(UpdateRect.right  < MousePos.x)  UpdateRect.right  = MousePos.x;
-    if(UpdateRect.bottom < MousePos.y)  UpdateRect.bottom = MousePos.y;
+    if (UpdateRect.left   > MousePos.x)  UpdateRect.left   = MousePos.x;
+    if (UpdateRect.top    > MousePos.y)  UpdateRect.top    = MousePos.y;
+    if (UpdateRect.right  < MousePos.x)  UpdateRect.right  = MousePos.x;
+    if (UpdateRect.bottom < MousePos.y)  UpdateRect.bottom = MousePos.y;
 
     UpdateRect.left   -= MagnifyWinSize;
     UpdateRect.top    -= MagnifyWinSize;
     UpdateRect.right  += MagnifyWinSize;
     UpdateRect.bottom += MagnifyWinSize;
 
-    if(Window()->Lock())
+    if (LockLooper())
     {
       Draw(UpdateRect);
-      Window()->Unlock();
+      UnlockLooper();
     }
   }
-  else if(((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
+  else if (((ViewApplication *)be_app)->MeasureWinOpen && Window()->IsActive())
   {
     MousePos = where;
 
     SetDrawingMode(B_OP_INVERT);
-    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, Document->PageHeight - 1));
-    StrokeLine(BPoint(0, MousePos.y), BPoint(Document->PageWidth - 1, MousePos.y));
+    StrokeLine(BPoint(MousePos.x, 0), BPoint(MousePos.x, DocHeight - 1));
+    StrokeLine(BPoint(0, MousePos.y), BPoint(DocWidth - 1, MousePos.y));
     SetDrawingMode(B_OP_COPY);    
   }
   else
     MousePos = where;
 }
 
+// scripting
+
+// properties understood by a DVIView
+
+property_info DVIView::PropertyList[] =
+{
+  {"Page",    {B_GET_PROPERTY, B_SET_PROPERTY, 0}, {B_DIRECT_SPECIFIER, 0}, "get or set displayed page",          0},
+  {"IncPage", {B_SET_PROPERTY, 0},                 {B_DIRECT_SPECIFIER, 0}, "increment number of displayed page", 0},
+  {"Shrink",  {B_GET_PROPERTY, B_SET_PROPERTY, 0}, {B_DIRECT_SPECIFIER, 0}, "get or set shrink factor",           0},
+  0
+};
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void DVIView::SetDocument(DVI *doc)                                                                            //
+// BHandler *DVIView::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form,               //
+//                                     const char *property)                                                      //
+//                                                                                                                //
+// Resolves scripting specifiers.                                                                                 //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BHandler *DVIView::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form, const char *property)
+{
+  if (strcmp(property, "Page")    == 0 ||
+      strcmp(property, "IncPage") == 0 ||
+      strcmp(property, "Shrink")  == 0)
+    return this;
+
+  return inherited::ResolveSpecifier(msg, index, specifier, form, property);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// status_t DVIView::GetSupportedSuites(BMessage *message)                                                        //
+//                                                                                                                //
+// Returns the scripting suites supported by the view.                                                            //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+status_t DVIView::GetSupportedSuites(BMessage *message)
+{
+  BPropertyInfo prop_info(PropertyList);
+
+  message->AddString("suites",   "suite/vnd.blume-DVIView");
+  message->AddFlat(  "messages", &prop_info);
+
+  return inherited::GetSupportedSuites(message);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::GetProperty(BMessage *msg)                                                                       //
+//                                                                                                                //
+// Handles B_GET_PROPERTY messages.                                                                               //
+//                                                                                                                //
+// BMessage *msg                        scripting message                                                         //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::GetProperty(BMessage *msg)
+{
+  BMessage   Specifier;
+  const char *Property;
+  int32      Index;
+
+  if (msg->GetCurrentSpecifier(&Index, &Specifier, NULL, &Property) != B_OK)
+    return;
+
+  if (strcmp(Property, "Page") == 0)
+  {
+    BMessage Reply(B_REPLY);
+    status_t err;
+
+    err = Reply.AddInt32("result", PageNo);
+
+    Reply.AddInt32("error", err);
+
+    msg->SendReply(&Reply);
+  }
+  else if (strcmp(Property, "Shrink") == 0)
+  {
+    BMessage Reply(B_REPLY);
+    status_t err;
+
+    err = Reply.AddInt32("result", Settings.ShrinkFactor);
+
+    Reply.AddInt32("error", err);
+
+    msg->SendReply(&Reply);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::SetProperty(BMessage *msg)                                                                       //
+//                                                                                                                //
+// Handles B_SET_PROPERTY messages.                                                                               //
+//                                                                                                                //
+// BMessage *msg                        scripting message                                                         //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::SetProperty(BMessage *msg)
+{
+  BMessage   Specifier;
+  const char *Property;
+  int32      Index;
+
+  if (msg->GetCurrentSpecifier(&Index, &Specifier, NULL, &Property) != B_OK)
+    return;
+
+  if (strcmp(Property, "Page") == 0)
+  {
+    if (msg->FindInt32("data", &Index) != B_OK)
+    {
+      log_warn("invalid message received!");
+      return;
+    }
+    SetPage(Index);
+  }
+  else if (strcmp(Property, "IncPage") == 0)
+  {
+    if (msg->FindInt32("data", &Index) != B_OK)
+    {
+      log_warn("invalid message received!");
+      return;
+    }
+    SetPage(PageNo + Index);
+  }
+  else if (strcmp(Property, "Shrink") == 0)
+  {
+    if (msg->FindInt32("data", &Index) != B_OK)
+    {
+      log_warn("invalid message received!");
+      return;
+    }
+    SetShrinkFactor(Index);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::SetDocument(DVI *doc, uint NewPageNo = 1)                                                        //
 //                                                                                                                //
 // Sets the document to be displayed.                                                                             //
 //                                                                                                                //
-// DVI *doc                             document                                                                  //
+// DVI  *doc                            document                                                                  //
+// uint NewPageNo                       page number                                                               //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void DVIView::SetDocument(DVI *doc)
+void DVIView::SetDocument(DVI *doc, uint NewPageNo)
 {
-  DVI   *OldDoc;
-  u_int OldPageNo;
+  DVI  *OldDoc;
+  uint OldPageNo;
 
-  ASSERT(doc != NULL);
-
-  if(acquire_sem(DocLock) < B_NO_ERROR)
+  if (acquire_sem(DocLock) < B_OK)
   {
     delete doc;
     return;
   }
 
+  OldDoc    = Document;
+  OldPageNo = PageNo;
+
   try
   {
-    OldDoc    = Document;
-    OldPageNo = PageNo;
-
     Document = doc;
-    PageNo   = 1;
+    PageNo   = NewPageNo;
 
-    if(DocumentChanged())
+    if (DocumentChanged())
       delete OldDoc;
 
     else
@@ -666,11 +832,21 @@ void DVIView::SetDocument(DVI *doc)
   {
     log_error("%s!", e.what());
     log_debug("at %s:%d", __FILE__, __LINE__);
+
+    delete Document;
+
+    Document = OldDoc;
+    PageNo   = OldPageNo;
   }
   catch(...)
   {
     log_error("unknown exception!");
     log_debug("at %s:%d", __FILE__, __LINE__);
+
+    delete Document;
+
+    Document = OldDoc;
+    PageNo   = OldPageNo;
   }
 
   release_sem(DocLock);
@@ -680,24 +856,59 @@ void DVIView::SetDocument(DVI *doc)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void DVIView::PrintPage(u_int no)                                                                              //
+// DVI *DVIView::UnsetDocument()                                                                                  //
 //                                                                                                                //
-// Prints page number 'no'.                                                                                       //
+// removes the current document without deleting it.                                                              //
 //                                                                                                                //
-// u_int no                             page number                                                               //
+// Result:                              pointer to the document                                                   //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void DVIView::PrintPage(u_int no)
+DVI *DVIView::UnsetDocument()
 {
-  if(!Document)
+  DVI *doc;
+
+  if (!Document)
+    return NULL;
+
+  if (acquire_sem(DocLock) < B_OK)
+    return NULL;
+
+  doc = Document;
+
+  Document = NULL;
+
+  release_sem(DocLock);
+
+  UpdateWindow();
+
+  return doc;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::PrintPage(uint no)                                                                               //
+//                                                                                                                //
+// Prints page number 'no'.                                                                                       //
+//                                                                                                                //
+// uint no                              page number                                                               //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::PrintPage(uint no)
+{
+  DrawSettings set = Settings;
+
+  set.ShrinkFactor = 1;
+
+  if (!Document)
     return;
 
-  if(acquire_sem(DocLock) < B_NO_ERROR)
+  if (acquire_sem(DocLock) < B_OK)
     return;
 
-  SetScale(72.0 / Document->Settings.DspInfo.PixelsPerInch);
-  Document->DrawMagnify(this, no);
+  SetScale(72.0 / set.DspInfo.PixelsPerInch);
+  Document->Draw(this, &set, no);
   Sync();
 
   release_sem(DocLock);
@@ -705,35 +916,35 @@ void DVIView::PrintPage(u_int no)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// bool DVIView::SetPage(u_int no)                                                                                //
+// bool DVIView::SetPage(int no)                                                                                  //
 //                                                                                                                //
 // Sets the displayed page of the document.                                                                       //
 //                                                                                                                //
-// u_int no                             page number                                                               //
+// int no                               page number                                                               //
 //                                                                                                                //
 // Result:                              `true' if the page number changed, `false' if it remains the same         //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool DVIView::SetPage(u_int no)
+bool DVIView::SetPage(int no)
 {
-  char str[10];
-
   log_info("page: %u", no);
 
-  if(no != PageNo && Document)
+  if (no != PageNo && Document)
   {
-    if(acquire_sem(DocLock) < B_NO_ERROR)
+    if (acquire_sem(DocLock) < B_OK)
       return false;
 
-    if(no < 1)
+    if (no < 1)
       no = 1;
-    if(no > Document->NumPages)
+    if (no > Document->NumPages)
       no = Document->NumPages;
 
-    if(PageNo != no)
+    if (PageNo != no)
     {
       PageNo = no;
+
+      SearchString.erase();
 
       RedrawBuffer();
     }
@@ -745,79 +956,29 @@ bool DVIView::SetPage(u_int no)
   else
     no = 0;
 
-  if(Window()->Lock())
+  if (LockLooper())
   {
-    // update page counter
-
-    sprintf(str, "%u", PageNo);
-    ((BTextControl *)Window()->FindView("PageNumber"))->SetText(str);
-
+    UpdatePageCounter();
     Invalidate();
-    Window()->Unlock();
+    UnlockLooper();
   }
 
-  if(no > 0)
-    return true;
-  else
-    return false;
+  return no > 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// bool DVIView::IncPage()                                                                                        //
-//                                                                                                                //
-// Displays the next page.                                                                                        //
-//                                                                                                                //
-// Result:                              `true' if the page number changed, `false' if it remains the same         //
-//                                                                                                                //
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-bool DVIView::IncPage()
-{
-  return SetPage(PageNo + 1);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                                                                                                //
-// bool DVIView::DecPage()                                                                                        //
-//                                                                                                                //
-// Displays the previous page.                                                                                    //
-//                                                                                                                //
-// Result:                              `true' if the page number changed, `false' if it remains the same         //
-//                                                                                                                //
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-bool DVIView::DecPage()
-{
-  if(PageNo > 1)
-    return SetPage(PageNo - 1);
-  else
-    return false;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//                                                                                                                //
-// void DVIView::SetShrinkFactor(u_short sf)                                                                      //
+// void DVIView::SetShrinkFactor(ushort sf)                                                                       //
 //                                                                                                                //
 // Draws or clears the lines indicating the border of the page.                                                   //
 //                                                                                                                //
-// u_short sf                           factor to shrink document                                                 //
+// ushort sf                            factor to shrink document                                                 //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void DVIView::SetShrinkFactor(u_short sf)
+void DVIView::SetShrinkFactor(ushort sf)
 {
-  if(Document)
-  {
-    if(acquire_sem(DocLock) < B_NO_ERROR)
-      return;
-
-    Document->Settings.SetShrinkFactor(sf);
-
-    release_sem(DocLock);
-  }
-  else
-    ((ViewApplication *)be_app)->Settings.SetShrinkFactor(sf);
+  Settings.ShrinkFactor = sf;
 
   Reload();
 
@@ -834,29 +995,21 @@ void DVIView::SetShrinkFactor(u_short sf)
 
 void DVIView::ToggleBorderLine()
 {
-  DrawSettings *prefs;
-
-  if(acquire_sem(DocLock) < B_NO_ERROR)
+  if (acquire_sem(DocLock) < B_OK)
     return;
 
-  if(Document)
-    prefs = &Document->Settings;
+  Settings.BorderLine = !Settings.BorderLine;
 
-  else
-    prefs = &((ViewApplication *)be_app)->Settings;
-
-  prefs->BorderLine = !prefs->BorderLine;
-
-  ((BMenu *)Window()->FindView("Menu"))->FindItem(MsgBorderLine)->SetMarked(prefs->BorderLine);
+  ((BMenu *)Window()->FindView("Menu"))->FindItem(MsgBorderLine)->SetMarked(Settings.BorderLine);
 
   RedrawBuffer();
 
   release_sem(DocLock);
 
-  if(Window()->Lock())
+  if (LockLooper())
   {
     Invalidate();
-    Window()->Unlock();
+    UnlockLooper();
   }
 }
 
@@ -870,32 +1023,24 @@ void DVIView::ToggleBorderLine()
 
 void DVIView::ToggleAntiAliasing()
 {
-  DrawSettings *prefs;
-
-  if(acquire_sem(DocLock) < B_NO_ERROR)
+  if (acquire_sem(DocLock) < B_OK)
     return;
 
-  if(Document)
-    prefs = &Document->Settings;
+  Settings.AntiAliasing = !Settings.AntiAliasing;
 
-  else
-    prefs = &((ViewApplication *)be_app)->Settings;
+  ((BMenu *)Window()->FindView("Menu"))->FindItem(MsgAntiAliasing)->SetMarked(Settings.AntiAliasing);
 
-  prefs->AntiAliasing = !prefs->AntiAliasing;
-
-  ((BMenu *)Window()->FindView("Menu"))->FindItem(MsgAntiAliasing)->SetMarked(prefs->AntiAliasing);
-
-  if(Document)
+  if (Document)
     Document->Fonts.FlushShrinkedGlyphes();
 
   RedrawBuffer();
 
   release_sem(DocLock);
 
-  if(Window()->Lock())
+  if (LockLooper())
   {
     Invalidate();
-    Window()->Unlock();
+    UnlockLooper();
   }
 }
 
@@ -909,11 +1054,11 @@ void DVIView::ToggleAntiAliasing()
 
 void DVIView::UpdateWindow()
 {
-  if(Window()->Lock())
+  if (LockLooper())
   {
     UpdateMenus();
 
-    Window()->Unlock();
+    UnlockLooper();
   }
   inherited::UpdateWindow();
 }
@@ -928,28 +1073,38 @@ void DVIView::UpdateWindow()
 
 void DVIView::UpdateMenus()
 {
-  DrawSettings *prefs;
-  BMenu        *Menu;
-  int          i;
-
-  if(Document)
-    prefs = &Document->Settings;
-  else
-    prefs = &((ViewApplication *)be_app)->Settings;
+  BMenu *Menu;
+  int   i;
 
   Menu = ((BMenu *)Window()->FindView("Menu"));
 
-  for(i = 0; i < prefs->DspInfo.NumModes; i++)
-    if(strcmp(prefs->DspInfo.Mode, prefs->DspInfo.ModeNames[i]) == 0)
+  for (i = 0; i < Settings.DspInfo.NumModes; i++)
+    if (strcmp(Settings.DspInfo.Mode, Settings.DspInfo.ModeNames[i]) == 0)
     {
-      Menu->FindItem(prefs->DspInfo.ModeDPI[i])->SetMarked(true);
+      Menu->FindItem(Settings.DspInfo.ModeDPI[i])->SetMarked(true);
       break;
     }
 
-  Menu->FindItem(prefs->ShrinkFactor)->SetMarked(true);
-  Menu->FindItem(MsgAntiAliasing)->SetMarked(prefs->AntiAliasing);
-  Menu->FindItem(MsgBorderLine)->SetMarked(prefs->BorderLine);
+  Menu->FindItem(Settings.ShrinkFactor)->SetMarked(true);
+  Menu->FindItem(MsgAntiAliasing)->SetMarked(Settings.AntiAliasing);
+  Menu->FindItem(MsgBorderLine)->SetMarked(Settings.BorderLine);
   Menu->FindItem(MsgMeasureWin)->SetMarked(((ViewApplication *)be_app)->MeasureWinOpen);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::UpdatePageCounter()                                                                              //
+//                                                                                                                //
+// Updates the text control showing the current page number. The window should be locked.                         //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::UpdatePageCounter()
+{
+  char str[10];
+
+  sprintf(str, "%u", PageNo);
+  ((BTextControl *)Window()->FindView("PageNumber"))->SetText(str);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -962,25 +1117,24 @@ void DVIView::UpdateMenus()
 
 void DVIView::RedrawBuffer()
 {
-  if(Document)
+  if (Document)
   {
     ((ViewApplication *)be_app)->SetSleepCursor();
 
-    BufferView->ResizeTo(Document->PageWidth, Document->PageHeight);
-    BufferView->ResizeTo(Document->PageWidth, Document->PageHeight);
+    BufferView->ResizeTo(DocWidth, DocHeight);
     BufferView->MoveTo(0, 0);
     Buffer->AddChild(BufferView);
 
-    if(BufferView->Window()->Lock())
+    if (BufferView->LockLooper())
     {
-      if(acquire_sem(BufferLock) == B_NO_ERROR)
+      if (acquire_sem(BufferLock) == B_OK)
       {
-        Document->Draw(BufferView, PageNo);
+        Document->Draw(BufferView, &Settings, PageNo);
 
         release_sem(BufferLock);
       }
 
-      BufferView->Window()->Unlock();
+      BufferView->UnlockLooper();
     }
     Buffer->RemoveChild(BufferView);
 
@@ -999,49 +1153,43 @@ void DVIView::RedrawBuffer()
 
 void DVIView::RedrawMagnifyBuffer()
 {
-  rgb_color Black        = {0, 0, 0, 255};
-  int       ShrinkFactor;
+  DrawSettings set   = Settings;
+  rgb_color    Black = {0, 0, 0, 255};
+  int          ShrinkFactor;
 
-  if(!Document)
+  if (!Document)
     return;
 
-  if(acquire_sem(BufferLock) < B_OK)
+  if (acquire_sem(BufferLock) < B_OK)
     return;
 
-  if(!MagnifyBuffer)                             // if bitmap isn't allocated yet
-    if(!(MagnifyBuffer = new BBitmap(BRect(0, 0, 2 * MagnifyWinSize, 2 * MagnifyWinSize), B_COLOR_8_BIT, true)))
+  if (!MagnifyBuffer)                             // if bitmap isn't allocated yet
+    if (!(MagnifyBuffer = new BBitmap(BRect(0, 0, 2 * MagnifyWinSize, 2 * MagnifyWinSize), B_COLOR_8_BIT, true)))
       return;
 
-  ShrinkFactor = Document->Settings.ShrinkFactor;
+  ShrinkFactor     = Settings.ShrinkFactor;
+  set.ShrinkFactor = 1;
 
   BufferView->ResizeTo(Document->UnshrunkPageWidth, Document->UnshrunkPageHeight);
   MagnifyBuffer->AddChild(BufferView);
 
-  if(BufferView->Window()->Lock())
+  if (BufferView->LockLooper())
   {
     BufferView->MoveTo(-MousePos.x * ShrinkFactor + MagnifyWinSize,
                        -MousePos.y * ShrinkFactor + MagnifyWinSize);
 
-    Document->DrawMagnify(BufferView, PageNo);
+    Document->Draw(BufferView, &set, PageNo);
 
     BufferView->MoveTo(0, 0);
 
     BufferView->BeginLineArray(4);
-    BufferView->AddLine(BPoint(0, 0),
-                        BPoint(2 * MagnifyWinSize, 0),
-                        Black);
-    BufferView->AddLine(BPoint(2 * MagnifyWinSize, 0),
-                        BPoint(2 * MagnifyWinSize, 2 * MagnifyWinSize),
-                        Black);
-    BufferView->AddLine(BPoint(2 * MagnifyWinSize, 2 * MagnifyWinSize),
-                        BPoint(0, 2 * MagnifyWinSize),
-                        Black);
-    BufferView->AddLine(BPoint(0, 2 * MagnifyWinSize),
-                        BPoint(0, 0),
-                        Black);
+    BufferView->AddLine(BPoint(0, 0),                   BPoint(2 * MagnifyWinSize, 0),                   Black);
+    BufferView->AddLine(BPoint(2 * MagnifyWinSize, 0),  BPoint(2 * MagnifyWinSize, 2 * MagnifyWinSize),  Black);
+    BufferView->AddLine(BPoint(2 * MagnifyWinSize, 2 * MagnifyWinSize),  BPoint(0, 2 * MagnifyWinSize),  Black);
+    BufferView->AddLine(BPoint(0, 2 * MagnifyWinSize),  BPoint(0, 0),                                    Black);
     BufferView->EndLineArray();
 
-    BufferView->Window()->Unlock();
+    BufferView->UnlockLooper();
   }
   MagnifyBuffer->RemoveChild(BufferView);
 
@@ -1060,24 +1208,9 @@ void DVIView::RedrawMagnifyBuffer()
 
 void DVIView::SetDspInfo(DisplayInfo *dsp)
 {
-  ASSERT(dsp != NULL);
+  Settings.DspInfo = *dsp;
 
-  if(Document)
-  {
-    if(acquire_sem(DocLock) < B_NO_ERROR)
-      return;
-
-    ((ViewApplication *)be_app)->SetSleepCursor();
-
-    Document->SetDspInfo(dsp);
-
-    DocumentChanged();
-
-    ((ViewApplication *)be_app)->SetNormalCursor();
-
-    release_sem(DocLock);
-  }
-
+  Reload();
   UpdateWindow();
 }
 
@@ -1095,20 +1228,25 @@ bool DVIView::DocumentChanged()
 {
   BRect r;
 
+  if (!Document)
+    return true;
+
+  SetSize(Document->PageWidth, Document->PageHeight);
+
   // resize buffer if necessary
 
-  if(Buffer)
+  if (Buffer)
     r = Buffer->Bounds();
 
-  if(Buffer == NULL                                ||
-     Document->PageWidth  != r.right  - r.left + 1 ||
-     Document->PageHeight != r.bottom - r.top  + 1)
+  if (Buffer    == NULL                  ||
+      DocWidth  != r.right  - r.left + 1 ||
+      DocHeight != r.bottom - r.top  + 1)
   {
     BBitmap *NewBuffer = NULL;
 
     try
     {
-      if(!(NewBuffer = new BBitmap(BRect(0, 0, Document->PageWidth - 1, Document->PageHeight - 1), B_COLOR_8_BIT, true)))
+      if (!(NewBuffer = new BBitmap(BRect(0, 0, DocWidth - 1, DocHeight - 1), B_COLOR_8_BIT, true)))
         return false;
 
       delete Buffer;
@@ -1133,15 +1271,61 @@ bool DVIView::DocumentChanged()
 
   // resize magnify buffer if necessary
 
-  MagnifyWinSize = BaseMagnifyWinSize * Document->Settings.DspInfo.PixelsPerInch / 100;
+  MagnifyWinSize = BaseMagnifyWinSize * Settings.DspInfo.PixelsPerInch / 100;
 
-  if(MagnifyBuffer)
-    delete MagnifyBuffer;
+  delete MagnifyBuffer;
   MagnifyBuffer = NULL;
 
-  SetSize(Document->PageWidth, Document->PageHeight);
-
   return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// int32 DVIView::ReloadThread(void *arg)                                                                         //
+//                                                                                                                //
+// Reloads the current document.                                                                                  //
+//                                                                                                                //
+// void *arg                            pointer to the view                                                       //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int32 DVIView::ReloadThread(void *arg)
+{
+  DVIView *vw = (DVIView *)arg;
+  DVI     *doc;
+  uint    PageNo;
+
+  try
+  {
+    doc = vw->UnsetDocument();
+
+    if (acquire_sem(vw->DocLock) < B_OK)
+      return 0;
+ 
+    ((ViewApplication *)be_app)->SetSleepCursor();
+
+    PageNo = vw->PageNo;
+
+    if (doc->Reload(&vw->Settings))
+      vw->DocumentChanged();
+
+    release_sem(vw->DocLock);
+
+    vw->SetDocument(doc, PageNo);
+
+    ((ViewApplication *)be_app)->SetNormalCursor();
+  }
+  catch(const exception &e)
+  {
+    log_error("%s!", e.what());
+    log_debug("at %s:%d", __FILE__, __LINE__);
+  }
+  catch(...)
+  {
+    log_error("unknown exception!");
+    log_debug("at %s:%d", __FILE__, __LINE__);
+  }
+  return 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1156,37 +1340,165 @@ bool DVIView::DocumentChanged()
 
 bool DVIView::Reload()
 {
-  bool success;
+  thread_id tid;
 
-  if(!Document)
+  if (!Document)
     return true;
 
-  if(acquire_sem(DocLock) < B_NO_ERROR)
+  if ((tid = spawn_thread(ReloadThread, "reload file", B_NORMAL_PRIORITY, this)) < B_OK)
     return false;
 
-  ((ViewApplication *)be_app)->SetSleepCursor();
- 
-  try
-  {
-    success = false;
+  resume_thread(tid);
 
-    if(Document->Reload())
-      success = DocumentChanged();
-  }
-  catch(const exception &e)
+  return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::Search(const char *str, bool direction)                                                          //
+//                                                                                                                //
+// Searchs for the given string in the document.                                                                  //
+//                                                                                                                //
+// const char *str                      string to search for                                                      //
+// bool       direction                 `true': search forwards; `false': search backwards                        //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::Search(const char *str, bool direction)
+{
+  if (!Document)
+    return;
+
+  if (acquire_sem(DocLock) < B_OK)
+    return;
+
+  ((ViewApplication *)be_app)->SetSleepCursor();
+
+  BufferView->ResizeTo(DocWidth, DocHeight);
+  BufferView->MoveTo(0, 0);
+  Buffer->AddChild(BufferView);
+
+  if (BufferView->LockLooper())
   {
-    log_error("%s!", e.what());
-    log_debug("at %s:%d", __FILE__, __LINE__);
+    if (acquire_sem(BufferLock) == B_OK)
+    {
+      DrawSettings set = Settings;
+      int          increment;
+      int          bound;
+      uint         OldPageNo = PageNo;
+
+      if (direction)
+      {
+        increment = 1;
+        bound     = Document->NumPages;
+      }
+      else
+      {
+        increment = -1;
+        bound     = 1;
+      }
+
+      set.SearchString = str;
+
+      if (SearchString != str)                   // first search: start with this page
+        SearchString = str;
+
+      else                                       // else: start with next/previous page
+        if (PageNo != bound)
+          PageNo += increment;
+
+      for (set.StringFound = false; !set.StringFound; PageNo += increment)
+      {
+        Document->Draw(BufferView, &set, PageNo);
+
+        if (!set.StringFound && PageNo == bound)
+          break;
+      }
+      if (set.StringFound)
+        PageNo -= increment;
+
+      else
+      {
+        PageNo = OldPageNo;
+
+        set.SearchString = NULL;
+
+        Document->Draw(BufferView, &set, PageNo);
+      }
+
+      release_sem(BufferLock);
+    }
+
+    BufferView->UnlockLooper();
   }
-  catch(...)
-  {
-    log_error("unknown exception!");
-    log_debug("at %s:%d", __FILE__, __LINE__);
-  }
+  Buffer->RemoveChild(BufferView);
 
   ((ViewApplication *)be_app)->SetNormalCursor();
 
   release_sem(DocLock);
 
-  return success;
+  if (LockLooper())
+  {
+    UpdatePageCounter();
+    Invalidate();
+    UnlockLooper();
+  }
+}
+
+static status_t SetFileType(BFile *File, int32 Translator, uint32 Type)
+{
+  const translation_format *formats;
+  const char               *mime = NULL;
+  int32                    count;
+  status_t                 err;
+
+  if ((err = BTranslatorRoster::Default()->GetOutputFormats(Translator, &formats, &count)) < B_OK)
+    return err;
+
+  for (int ix = 0; ix < count; ix++)
+    if (formats[ix].type == Type)
+    {
+      mime = formats[ix].MIME;
+      break;
+    }
+
+  if (mime == NULL)
+    return B_ERROR;
+
+  BNodeInfo ninfo(File);
+  return ninfo.SetType(mime);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void DVIView::SavePage(BFile *File, uint32 Translator, uint32 Type)                                            //
+//                                                                                                                //
+// Write the current page to a file.                                                                              //
+//                                                                                                                //
+// BFile  *File                         file to write to                                                          //
+// uint32 Translator                    translator which should be used                                           //
+// uint32 Type                          format the data is written in                                             //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void DVIView::SavePage(BFile *File, uint32 Translator, uint32 Type)
+{
+  if (!Document)
+    return;
+
+  if (Buffer != NULL && acquire_sem(BufferLock) == B_OK)
+  {
+    BBitmapStream Page(Buffer);
+
+    if (BTranslatorRoster::Default()->Translate(Translator, &Page, NULL, File, Type) == B_OK)
+      SetFileType(File, Translator, Type);
+    else
+      log_error("couldn't translate bitmap!");
+
+    BBitmap *bm;
+
+    Page.DetachBitmap(&bm);     // we still need `Buffer', don't delete it
+
+    release_sem(BufferLock);
+  }
 }

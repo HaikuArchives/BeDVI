@@ -1,7 +1,7 @@
-         File: BeDVI-2.0.zip
+         File: BeDVI-2.1.zip
        Author: Achim Blumensath <blume@corona.oche.de>
-      Release: 2.0 (1998/8/24)
-Compatibility: R3
+      Release: 2.1 (1999/8/3)
+Compatibility: R4.5
      Location: contrib/gfx
   Description: BeDVI is a DVI viewer based on xdvi.
         Notes: o BeDVI requires an installed unixtex distribution.
@@ -13,20 +13,21 @@ Installing BeDVI
 ================
 
 There are two versions of BeDVI and DVIHandler included. The normal version has GhostScript
-support and therefor needs the GhostScript library libgs.so, the other version (`BeDVI-no.gs'
-and `DVIHandler-no.gs') can be used without this library.
+support and therefor needs the GhostScript library libgs.so. The executables can be found in
+the `ppc-gs' and `x86-gs' directory. The version in the `ppc-no-gs' and `x86-no-gs' directory
+can be used without this library.
 
 BeDVI needs the following libraries:
 
-  o libprefs.so version 1.23 (libprefs distribution)
+  o libprefs.so at least version 1.23 (libprefs distribution)
 
   o libkpathsea.so version 3.1 (unixtex distribution)
 
 The full version additionaly needs:
 
-  o libgs.so version 5.03 (GhostScript distribution)
+  o libgs.so version 5.50 (GhostScript distribution)
 
-Copy the file `DVIHandler' (or `DVIHandler-no.gs') to `~/config/add-ons/Translators/'.
+Copy the file `DVIHandler' to `~/config/add-ons/Translators/'.
 
 BeDVI searches for TeX fonts in the directories `/var/tex/fonts/pk' and
 `/boot/apps/GeekGadgets/share/texmf/fonts/pk'. Font files aren't included in this archive. They
@@ -37,8 +38,8 @@ Uninstalling BeDVI
 ==================
 
 Delete the program itself, `~/config/add-ons/Translators/DVIHandler' and the directory
-`/boot/home/config/settings/_LP_x-vnd.blume-BeDVI/'. If there are no other programs using
-libprefs.so, libgs.so and libkpathsea.so, those libraries can also be deleted.
+`~/config/settings/_LP_x-vnd.blume-BeDVI/'. If there are no other programs using libprefs.so,
+libgs.so, and libkpathsea.so, those libraries can also be deleted.
 
 
 Localization
@@ -61,7 +62,7 @@ Commandline options:
   BeDVI [-v<log-level>] [<files> ...]
 
 The option -v can be used to specify the verbosity of BeDVI's error messages which are
-written to the file /var/log/syslog. The <log-level> can be any number from 0 (no logging)
+written to the file `/var/log/syslog'. The <log-level> can be any number from 0 (no logging)
 to 5 (full logging).
 
 Menus:
@@ -69,12 +70,13 @@ Menus:
   File: About…                  displays a short message about BeDVI
   File: Open…                   opens a document in a new window
   File: Load…                   loads a document in the same window
-  File: Reload…                 reloads the current document
-  File: Print Page              prints the current page
+  File: Reload                  reloads the current document
+  File: Save Page…              saves the current page to a file
   File: Quit                    quits BeDVI
   Display: Anti Aliasing        selects the mode shrunken pages are displayed
   Display: Border Line          selects if lines should be drawn at the borders of a page
   Display: Measure Window       open/close the measure window
+  Move: Search                  searchs for strings in the dvi file
   Move: First Page              go to first page
   Move: Last Page               go to last page
   Move: Next Page               go to next page
@@ -118,25 +120,31 @@ coordinates of the cursor are displayed there.
 Scripting
 =========
 
+Each document window has the following properties:
+
+  Page       get or set the number of the displayed page
+  IncPage    increment the number of the displayed page
+  Shrink     get or set shrink facto
+
 BeDVI understands the following messages:
 
- target        what   arguments                description
----------------------------------------------------------------------------------------
- application  'opnl'                           open file panel
- application  'open'  B_REF_TYPE "refs"        open file
- application  'nwin'  B_POINTER_TYPE "window"  activate next window
- application  'pwin'  B_POINTER_TYPE "window"  activate previous window
- window       'lpnl'                           load file panel
- window       'load'                           load file
- window       'rlod'                           reload
- window       'prtp'                           print page
- window       'grey'                           toggle anti aliasing
- window       'bord'                           toggle border line
- window       'mwin'                           open/close measure window
- window       'next'                           next page
- window       'prev'                           previous page
- window       'frst'                           first page
- window       'last'                           last page
- window       'rdrw'                           redraw
- window       <n>                              set the magnification to n if n < 16,
-                                               set the resolution to n if n < 0x10000
+  target        what   arguments                description
+ ---------------------------------------------------------------------------------------
+  application  'opnl'                           open file panel
+  application  'open'  B_REF_TYPE "refs"        open file
+  application  'nwin'  B_POINTER_TYPE "window"  activate next window
+  application  'pwin'  B_POINTER_TYPE "window"  activate previous window
+  window       'lpnl'                           load file panel
+  window       'load'                           load file
+  window       'rlod'                           reload
+  window       'prtp'                           print page
+  window       'grey'                           toggle anti aliasing
+  window       'bord'                           toggle border line
+  window       'mwin'                           open/close measure window
+  window       'next'                           next page
+  window       'prev'                           previous page
+  window       'frst'                           first page
+  window       'last'                           last page
+  window       'rdrw'                           redraw
+  window       <n>                              set the magnification to n if n < 16,
+                                                set the resolution to n if n < 0x10000

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: BeDVI.cc,v 2.3 1998/08/20 11:16:05 achim Exp $
+// $Id: BeDVI.cc,v 2.6 1999/07/22 13:36:35 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -28,10 +28,12 @@
 
 extern "C"
 {
+  #define string _string
   #include "kpathsea/c-auto.h"
   #include "kpathsea/progname.h"
   #include "kpathsea/proginit.h"
   #include "kpathsea/tex-file.h"
+  #undef string
 }
 
 #include "BeDVI.h"
@@ -52,11 +54,14 @@ ViewApplication::ViewApplication():
   PrefHandle(NULL),
   MenuDefs(DefaultMenu),
   WindowBounds(90.0, 30.0, 630.0, 470.0),
+  SearchWinBounds(120.0, 130.0, 250.0, 150.0),
   MeasureWinPos(10.0, 30.0),
+  WinListLock(B_ERROR),
+  ActiveWindow(NULL),
   MeasureWin(NULL),
+  SearchWin(NULL),
   OpenPanel(NULL),
   SleepPointerNestCnt(0),
-  NumWindows(0),
   NoDocLoaded(true),
   MeasureWinOpen(false)
 {
@@ -66,21 +71,23 @@ ViewApplication::ViewApplication():
   BFile      AppFile;
   BResources AppResource;
   PREFData   PrefData;
-  u_int      PixelsPerInch = 300;
-  u_int      ShrinkFactor  = 3;
-  void       *p;
+  uint       PixelsPerInch = 300;
+  const void *p;
   ssize_t    Size;
   size_t     len;
   uint32     Type;
   char       Buffer[1024];
 
-  if(PREFInit("x-vnd.blume-BeDVI", &PrefHandle) < B_OK)
+  if ((WinListLock = create_sem(1, "window list lock")) < B_OK)
+    throw(runtime_error("can't create semaphore"));
+
+  if (PREFInit("x-vnd.blume-BeDVI", &PrefHandle) < B_OK)
     PrefHandle = NULL;
 
-  if(GetAppInfo(&AppInfo)             != B_OK ||
-     AppFileEntry.SetTo(&AppInfo.ref) != B_OK ||
-     AppFileEntry.GetPath(&AppPath)   != B_OK)
-    throw(exception("can't get binary path"));
+  if (GetAppInfo(&AppInfo)             != B_OK ||
+      AppFileEntry.SetTo(&AppInfo.ref) != B_OK ||
+      AppFileEntry.GetPath(&AppPath)   != B_OK)
+    throw(runtime_error("can't get binary path"));
 
   acquire_sem(kpse_sem);
   kpse_set_program_name((const char *)AppPath.Path(), (const char *)"BeDVI");  // set default name
@@ -91,37 +98,45 @@ ViewApplication::ViewApplication():
 
   // load menu resource
 
-  if(AppFile.SetTo(&AppFileEntry, B_READ_ONLY) == B_OK &&
-     AppResource.SetTo(&AppFile)               == B_OK &&
-     (p = AppResource.FindResource(B_STRING_TYPE, "BeDVI:MenuData", &len)))
+  if (AppFile.SetTo(&AppFileEntry, B_READ_ONLY) == B_OK &&
+      AppResource.SetTo(&AppFile)               == B_OK &&
+      (p = AppResource.FindResource(B_STRING_TYPE, "BeDVI:MenuData", &len)))
     ReadMenuDef((char *)p, len);
 
   // load preferences
 
-  if(PrefHandle && PREFLoadSet(PrefHandle, "settings", true, &PrefData) >= B_OK)
+  if (PrefHandle && PREFLoadSet(PrefHandle, "settings", true, &PrefData) >= B_OK)
   {
-    if(PREFGetData(PrefData, "win x1",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      WindowBounds.left     = *(float *)p;
-    if(PREFGetData(PrefData, "win y1",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      WindowBounds.top      = *(float *)p;
-    if(PREFGetData(PrefData, "win x2",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      WindowBounds.right    = *(float *)p;
-    if(PREFGetData(PrefData, "win y2",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      WindowBounds.bottom   = *(float *)p;
-    if(PREFGetData(PrefData, "mwin x",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      MeasureWinPos.x       = *(float *)p;
-    if(PREFGetData(PrefData, "mwin y",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
-      MeasureWinPos.y       = *(float *)p;
-    if(PREFGetData(PrefData, "dpi",          &p, &Size, &Type) >= B_OK && Type == B_INT32_TYPE)
-      PixelsPerInch         = *(int32 *)p;
-    if(PREFGetData(PrefData, "shrink",       &p, &Size, &Type) >= B_OK && Type == B_INT16_TYPE)
-      Settings.ShrinkFactor = *(int16 *)p;
-    if(PREFGetData(PrefData, "antialiasing", &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
-      Settings.AntiAliasing = *(bool *)p;
-    if(PREFGetData(PrefData, "borderline",   &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
-      Settings.BorderLine   = *(bool *)p;
-    if(PREFGetData(PrefData, "measure",      &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
-      MeasureWinOpen        = *(bool *)p;
+    if (PREFGetData(PrefData, "win x1",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      WindowBounds.left      = *(float *)p;
+    if (PREFGetData(PrefData, "win y1",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      WindowBounds.top       = *(float *)p;
+    if (PREFGetData(PrefData, "win x2",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      WindowBounds.right     = *(float *)p;
+    if (PREFGetData(PrefData, "win y2",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      WindowBounds.bottom    = *(float *)p;
+    if (PREFGetData(PrefData, "swin x1",      &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      SearchWinBounds.left   = *(float *)p;
+    if (PREFGetData(PrefData, "swin y1",      &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      SearchWinBounds.top    = *(float *)p;
+    if (PREFGetData(PrefData, "swin x2",      &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      SearchWinBounds.right  = *(float *)p;
+    if (PREFGetData(PrefData, "swin y2",      &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      SearchWinBounds.bottom = *(float *)p;
+    if (PREFGetData(PrefData, "mwin x",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      MeasureWinPos.x        = *(float *)p;
+    if (PREFGetData(PrefData, "mwin y",       &p, &Size, &Type) >= B_OK && Type == B_FLOAT_TYPE)
+      MeasureWinPos.y        = *(float *)p;
+    if (PREFGetData(PrefData, "dpi",          &p, &Size, &Type) >= B_OK && Type == B_INT32_TYPE)
+      PixelsPerInch          = *(int32 *)p;
+    if (PREFGetData(PrefData, "shrink",       &p, &Size, &Type) >= B_OK && Type == B_INT16_TYPE)
+      Settings.ShrinkFactor  = *(int16 *)p;
+    if (PREFGetData(PrefData, "antialiasing", &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
+      Settings.AntiAliasing  = *(bool *)p;
+    if (PREFGetData(PrefData, "borderline",   &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
+      Settings.BorderLine    = *(bool *)p;
+    if (PREFGetData(PrefData, "measure",      &p, &Size, &Type) >= B_OK && Type == B_BOOL_TYPE)
+      MeasureWinOpen         = *(bool *)p;
 
     PREFDisposeSet(&PrefData);
   }
@@ -130,10 +145,10 @@ ViewApplication::ViewApplication():
 
   // init display
 
-  if(!OpenWindow())
-    throw(exception("can't open window"));
+  if (!OpenWindow())
+    throw(runtime_error("can't open window"));
 
-  if(MeasureWinOpen)
+  if (MeasureWinOpen)
     MeasureWin = OpenMeasureWindow(MeasureWinPos);
 }
 
@@ -151,14 +166,18 @@ ViewApplication::~ViewApplication()
 
   delete OpenPanel;
 
-  if(PrefHandle)
+  if (PrefHandle)
   {
-    if(PREFLoadSet(PrefHandle, "settings", true, &PrefData) >= B_OK)
+    if (PREFLoadSet(PrefHandle, "settings", true, &PrefData) >= B_OK)
     {
       PREFSetData(PrefData, "win x1",       &WindowBounds.left,              sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "win y1",       &WindowBounds.top,               sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "win x2",       &WindowBounds.right,             sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "win y2",       &WindowBounds.bottom,            sizeof(float), B_FLOAT_TYPE);
+      PREFSetData(PrefData, "swin x1",      &SearchWinBounds.left,           sizeof(float), B_FLOAT_TYPE);
+      PREFSetData(PrefData, "swin y1",      &SearchWinBounds.top,            sizeof(float), B_FLOAT_TYPE);
+      PREFSetData(PrefData, "swin x2",      &SearchWinBounds.right,          sizeof(float), B_FLOAT_TYPE);
+      PREFSetData(PrefData, "swin y2",      &SearchWinBounds.bottom,         sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "mwin x",       &MeasureWinPos.x,                sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "mwin y",       &MeasureWinPos.y,                sizeof(float), B_FLOAT_TYPE);
       PREFSetData(PrefData, "dpi",          &Settings.DspInfo.PixelsPerInch, sizeof(int32), B_INT32_TYPE);
@@ -173,6 +192,9 @@ ViewApplication::~ViewApplication()
 
     PREFShutdown(PrefHandle);
   }
+
+  if (WinListLock >= B_OK)
+    delete_sem(WinListLock);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -191,11 +213,11 @@ void ViewApplication::ArgvReceived(int32 argc, char **argv)
   kpse_set_program_name(argv[0], "BeDVI");
   release_sem(kpse_sem);
 
-  for(i = 1; i < argc; i++)
+  for (i = 1; i < argc; i++)
   {
-    if(argv[i][0] == '-')
+    if (argv[i][0] == '-')
     {
-      switch(argv[i][1])
+      switch (argv[i][1])
       {
         case 'v':                // set log level
         {
@@ -216,19 +238,19 @@ void ViewApplication::ArgvReceived(int32 argc, char **argv)
       entry_ref file;
       BEntry    e;
 
-      if(get_ref_for_path(argv[i], &file) != B_OK)
+      if (get_ref_for_path(argv[i], &file) != B_OK)
       {
         log_error("Can't open file!");
         continue;
       }
 
-      if(e.SetTo(&file) != B_OK || !e.Exists())
+      if (e.SetTo(&file) != B_OK || !e.Exists())
       {
         char *str;
 
         // append ".dvi" to filename and try again
 
-        if(!(str = (char *)malloc(strlen(argv[i]) + 5)))
+        if (!(str = (char *)malloc(strlen(argv[i]) + 5)))
         {
           log_error("Can't open file!");
           continue;
@@ -237,7 +259,7 @@ void ViewApplication::ArgvReceived(int32 argc, char **argv)
         strcpy(str, argv[i]);
         strcat(str, ".dvi");
 
-        if(get_ref_for_path(str, &file) != B_OK)
+        if (get_ref_for_path(str, &file) != B_OK)
         {
           free(str);
           log_error("Can't open file!");
@@ -245,19 +267,19 @@ void ViewApplication::ArgvReceived(int32 argc, char **argv)
         }
         free(str);
 
-        if(e.SetTo(&file) != B_OK || !e.Exists())
+        if (e.SetTo(&file) != B_OK || !e.Exists())
         {
           log_error("Can't open file!");
           continue;
         }
       }
 
-      if(NoDocLoaded)
+      if (NoDocLoaded)
       {
         BMessage msg(MsgLoadFile);
 
-        if(msg.AddRef("refs", &file) == B_OK)
-          WindowAt(0)->PostMessage(&msg);
+        if (msg.AddRef("refs", &file) == B_OK)
+          ActiveWindow->PostMessage(&msg);
 
         // In case there are several files given on the command line, this has to be set here in order to avoid a
         // race condition. The window will set it to late. (I know, it's ugly.)
@@ -268,7 +290,7 @@ void ViewApplication::ArgvReceived(int32 argc, char **argv)
       {
         BMessage msg(MsgOpenFile);
 
-        if(msg.AddRef("refs", &file) == B_OK)
+        if (msg.AddRef("refs", &file) == B_OK)
           PostMessage(&msg);
       }
     }
@@ -287,13 +309,13 @@ void ViewApplication::RefsReceived(BMessage *msg)
 {
   entry_ref file;
 
-  if(NoDocLoaded)
+  if (NoDocLoaded)
   {
     // load the file into the empty window
 
     msg->what = MsgLoadFile;
 
-    WindowAt(0)->PostMessage(msg);
+    ActiveWindow->PostMessage(msg);
   }
   else
   {
@@ -315,7 +337,7 @@ void ViewApplication::RefsReceived(BMessage *msg)
 
 bool ViewApplication::QuitRequested()
 {
-  if(OpenPanel)
+  if (OpenPanel)
   {
     delete OpenPanel;                                      // necessary to prevent deadlock when closing the window
     OpenPanel = NULL;
@@ -339,6 +361,7 @@ void ViewApplication::AboutRequested()
     (new BAlert("About",
                 "BeDVI " VERSION " ("__DATE__")\n\n"
                 "by Achim Blumensath\n\n"
+                "Special thanks to Sander Stoks\n\n"
                 "This program is free software!\n"
                 "Consult the GNU Public License for more information.",
                 "Ok", NULL, NULL, B_WIDTH_AS_USUAL, B_INFO_ALERT))->Go();
@@ -360,23 +383,45 @@ void ViewApplication::AboutRequested()
 
 void ViewApplication::MessageReceived(BMessage *msg)
 {
-  switch(msg->what)
+  switch (msg->what)
   {
     case MsgOpenPanel:
-      LaunchFilePanel(NULL);
+      msg->what = MsgOpenFile;
+
+      LaunchFilePanel(msg, NULL);
       break;
 
+    case MsgLoadPanel:
+    case MsgSavePanel:
+    {
+      void *win;
+
+      if (msg->FindPointer("Window", &win) != B_OK)
+      {
+        log_warn("invalid message received!");
+        break;
+      }
+
+      if (msg->what == MsgLoadPanel)
+        msg->what = MsgLoadFile;
+      else
+        msg->what = MsgSavePage;
+
+      LaunchFilePanel(msg, (BWindow *)win);
+
+      break;
+    }
     case MsgOpenFile:
     {
       BWindow *win;
 
       // open new window
 
-      if(NoDocLoaded)
-        win = WindowAt(0);                  // take empty window
+      if (NoDocLoaded)
+        win = ActiveWindow;                  // take empty window
 
       else
-        if(!(win = OpenWindow()))           // open new one
+        if (!(win = OpenWindow()))           // open new one
         {
           DisplayError("Not enough memory!");
           return;
@@ -390,21 +435,21 @@ void ViewApplication::MessageReceived(BMessage *msg)
     }
 
     case MsgPoint:
-      if(MeasureWin)
+      if (MeasureWin)
         MeasureWin->PostMessage(msg);
       break;
 
     case MsgMeasureWin:
       MeasureWinOpen = !MeasureWinOpen;
 
-      if(MeasureWinOpen)
+      if (MeasureWinOpen)
       {
-        if(!MeasureWin)
+        if (!MeasureWin)
           MeasureWin = OpenMeasureWindow(MeasureWinPos);
       }
       else
       {
-        if(MeasureWin)
+        if (MeasureWin)
         {
           MeasureWin->Lock();
           MeasureWin->Quit();
@@ -412,98 +457,56 @@ void ViewApplication::MessageReceived(BMessage *msg)
         }
       }
 
-      for(int i = CountWindows(); i > 0; i--)
+      for (int i = CountWindows(); i > 0; i--)
         WindowAt(i - 1)->PostMessage(MsgRedraw);
       break;
 
+    case MsgSearchWin:
+    {
+      void *win;
+
+      if (SearchWin)
+        if (SearchWin->Lock())
+          SearchWin->Quit();
+
+      if (msg->FindPointer("Window", &win) == B_OK)
+        SearchWin = OpenSearchWindow(SearchWinBounds, (BWindow *)win);
+      else
+        log_warn("invalid message received!");
+
+      break;
+    }
     case MsgNextWindow:
     {
-      BWindow *win, *w;
-      int     NumWin;
-      int32   no, i;
+      BWindow *win;
 
-      if(msg->FindPointer("Window", &win) < B_OK)
+      if (msg->FindPointer("Window", (void **)&win) < B_OK)
       {
         log_warn("invalid message received!");
         break;
       }
 
-      NumWin = CountWindows();
-
-      // get number of the window
-
-      for(no = 0; w = WindowAt(no); no++)
-        if(w == win)
-          break;
-
-      if(w != win)
-        break;
-
-      // get number of the next (unhidden) window
-
-      for(i = no + 1; i != no; i++)
-      {
-        if(i >= NumWin)
-          i = 0;
-
-        if((win = WindowAt(i)) && win->Lock())
-        {
-          if(win != MeasureWin && !win->IsHidden())    // skip FilePanel and Measure-Window
-          {
-            win->Unlock();
-            win->Activate();
-            break;
-          }
-          win->Unlock();
-        }
-      }
+      if (win = NextDocWindow(win))
+        win->Activate();
       break;
     }
     case MsgPrevWindow:
     {
-      BWindow *win, *w;
-      int     NumWin;
-      int32   no, i;
+      BWindow *win;
 
-      if(msg->FindPointer("Window", &win) < B_OK)
+      if (msg->FindPointer("Window", (void **)&win) < B_OK)
       {
         log_warn("invalid message received!");
         break;
       }
 
-      NumWin = CountWindows();
-
-      // get number of the window
-
-      for(no = 0; w = WindowAt(no); no++)
-        if(w == win)
-          break;
-
-      if(w != win)
-        break;
-
-      // get number of the next (unhidden) window
-
-      for(i = no - 1; i != no; i--)
-      {
-        if(i < 0)
-          i = NumWin;
-
-        if((win = WindowAt(i)) && win->Lock())
-        {
-          if(win != MeasureWin && !win->IsHidden())    // skip FilePanel and Measure-Window
-          {
-            win->Unlock();
-            win->Activate();
-            break;
-          }
-          win->Unlock();
-        }
-      }
+      if (win = PrevDocWindow(win))
+        win->Activate();
       break;
     }
     default:
       inherited::MessageReceived(msg);
+      break;
   }
 }
 
@@ -528,32 +531,32 @@ static bool ParseLine(const char *line, const char *end, const char **Fields, in
   const char *p;
   int        i;
 
-  for(i = NumFields - 1; end >= line && i >= 0; i--)
+  for (i = NumFields - 1; end >= line && i >= 0; i--)
   {
     // get end of current field
 
     p = end - 1;
 
-    while(p >= line && isspace(*p))
+    while (p >= line && isspace(*p))
       p--;
 
     Fields[2 * i + 1] = p;
 
     // find last comma in `line'
 
-    while(p >= line && *p != ',')
+    while (p >= line && *p != ',')
       p--;
 
     end = p++;
 
     // get begin of current field
 
-    while(p < Fields[2 * i + 1] && isspace(*p))
+    while (p < Fields[2 * i + 1] && isspace(*p))
       p++;
 
     Fields[2 * i] = p;
 
-    while(Fields[2 * i + 1] > p && isspace(*Fields[2 * i + 1]))
+    while (Fields[2 * i + 1] > p && isspace(*Fields[2 * i + 1]))
       Fields[2 * i + 1]--;
 
     Fields[2 * i + 1]++;
@@ -561,7 +564,7 @@ static bool ParseLine(const char *line, const char *end, const char **Fields, in
 
   // Did we find `NumFields' fields?
 
-  if(end < line && i < 0)
+  if (end < line && i < 0)
     return true;
   else
     return false;
@@ -580,7 +583,7 @@ static bool ParseLine(const char *line, const char *end, const char **Fields, in
 
 const int          ViewApplication::NumMenus                 = 5;
 
-static const int   _NumSubMenus[ViewApplication::NumMenus]   = {5, 3, 6, 3, 8};
+static const int   _NumSubMenus[ViewApplication::NumMenus]   = {6, 3, 7, 3, 8};
 static const bool  _RadioModeMenu[ViewApplication::NumMenus] = {false, false, false, true, true};
 
 const int  * const ViewApplication::NumSubMenus              = &_NumSubMenus[0];
@@ -588,37 +591,39 @@ const bool * const ViewApplication::RadioModeMenu            = &_RadioModeMenu[0
 
 static const ViewApplication::MenuDef _DefaultMenu[] =
 {
-  {"File",            0,  NULL             },
-  {"About…",         '?', B_ABOUT_REQUESTED},
-  {"Open…",          'O', MsgOpenPanel     },
-  {"Load…",          'L', MsgLoadPanel     },
-  {"Reload",         'R', MsgReload        },
-//  {"Print Page",     'P', MsgPrintPage     },
-  {"Quit",           'Q', B_QUIT_REQUESTED },
-  {"Display",         0,  NULL             },
-  {"Anti Aliasing",  'A', MsgAntiAliasing  },
-  {"Border Line",    'B', MsgBorderLine    },
-  {"Measure Window", 'M', MsgMeasureWin    },
-  {"Move",            0,  NULL             },
-  {"First Page",     '<', MsgFirst         },
-  {"Last Page",      '>', MsgLast          },
-  {"Next Page",      '+', MsgNext          },
-  {"Prev Page",      '-', MsgPrev          },
-  {"Next Window",    '*', MsgNextWindow    },
-  {"Prev Window",    '_', MsgPrevWindow    },
-  {"Resolution",      0,  NULL             },
-  {"600 dpi",         0,  600              },
-  {"300 dpi",         0,  300              },
-  {"100 dpi",         0,  100              },
-  {"Magnification",   0,  NULL             },
-  {"Shrink to 1/1",  '1', 1                },
-  {"Shrink to 1/2",  '2', 2                },
-  {"Shrink to 1/3",  '3', 3                },
-  {"Shrink to 1/4",  '4', 4                },
-  {"Shrink to 1/5",  '5', 5                },
-  {"Shrink to 1/6",  '6', 6                },
-  {"Shrink to 1/9",  '7', 9                },
-  {"Shrink to 1/12", '8', 12               }
+  {"File",            0,  true,  0                },
+  {"About…",         '?', false, B_ABOUT_REQUESTED},
+  {"Open…",          'O', false, MsgOpenPanel     },
+  {"Load…",          'L', true,  MsgLoadPanel     },
+  {"Reload",         'R', true,  MsgReload        },
+  {"Save Page…",      0,  true,  MsgSavePanel     },
+//  {"Print Page",     'P', true,  MsgPrintPage     },
+  {"Quit",           'Q', false, B_QUIT_REQUESTED },
+  {"Display",         0,  true,  0                },
+  {"Anti Aliasing",  'A', true,  MsgAntiAliasing  },
+  {"Border Line",    'B', true,  MsgBorderLine    },
+  {"Measure Window", 'M', false, MsgMeasureWin    },
+  {"Move",            0,  true,  0                },
+  {"Search",         'F', true,  MsgSearchWin     },
+  {"First Page",     '<', true,  MsgFirst         },
+  {"Last Page",      '>', true,  MsgLast          },
+  {"Next Page",      '+', true,  MsgNext          },
+  {"Prev Page",      '-', true,  MsgPrev          },
+  {"Next Window",    '*', false, MsgNextWindow    },
+  {"Prev Window",    '_', false, MsgPrevWindow    },
+  {"Resolution",      0,  true,  0                },
+  {"600 dpi",         0,  true,  600              },
+  {"300 dpi",         0,  true,  300              },
+  {"100 dpi",         0,  true,  100              },
+  {"Magnification",   0,  true,  0                },
+  {"Shrink to 1/1",  '1', true,  1                },
+  {"Shrink to 1/2",  '2', true,  2                },
+  {"Shrink to 1/3",  '3', true,  3                },
+  {"Shrink to 1/4",  '4', true,  4                },
+  {"Shrink to 1/5",  '5', true,  5                },
+  {"Shrink to 1/6",  '6', true,  6                },
+  {"Shrink to 1/9",  '7', true,  9                },
+  {"Shrink to 1/12", '8', true,  12               }
 };
 const ViewApplication::MenuDef * const ViewApplication::DefaultMenu = &_DefaultMenu[0];
 
@@ -639,73 +644,73 @@ bool ViewApplication::ReadMenuDef(char *def, size_t len)
 {
   MenuDef *NewMenuDef = NULL;
   char    **ModeName  = NULL;
-  u_int   *ModeDPI    = NULL;
+  uint    *ModeDPI    = NULL;
 
   try
   {
-    char   *line;
-    int    num;
-    int    ResMenuIndex;
-    int    MagMenuIndex;
-    char   *Fields[8];
-    char   *p;
-    int    i;
+    char *line;
+    int  num;
+    int  ResMenuIndex;
+    int  MagMenuIndex;
+    char *Fields[8];
+    char *p;
+    int  i;
 
     // get number of all menus (including submenus) and the indexes of the resolution and magnification menus
 
-    for(i = 0, num = NumMenus; i < NumMenus; i++)
+    for (i = 0, num = NumMenus; i < NumMenus; i++)
       num += NumSubMenus[i];
 
-    for(i = 0, ResMenuIndex = NumMenus - 2; i < NumMenus - 2; i++)
+    for (i = 0, ResMenuIndex = NumMenus - 2; i < NumMenus - 2; i++)
       ResMenuIndex += NumSubMenus[i];
 
     MagMenuIndex = ResMenuIndex + NumSubMenus[NumMenus - 2] + 1;
 
     NewMenuDef = new MenuDef[num];
     ModeName   = new char * [NumSubMenus[NumMenus - 2]];
-    ModeDPI    = new u_int  [NumSubMenus[NumMenus - 2]];
+    ModeDPI    = new uint   [NumSubMenus[NumMenus - 2]];
 
     memcpy(NewMenuDef, DefaultMenu, num * sizeof(*DefaultMenu));
 
     // parse menu definition
 
-    for(i = 0, line = def; line < def + len && i < num; i++)
+    for (i = 0, line = def; line < def + len && i < num; i++)
     {
       // skip comments and whitespace
 
-      while(*line == '#' || isspace(*line))
+      while (*line == '#' || isspace(*line))
       {
-        while(isspace(*line))
-          if(++line >= def + len)
-            throw(exception("parse error at menu definition"));
+        while (isspace(*line))
+          if (++line >= def + len)
+            throw(runtime_error("parse error at menu definition"));
 
-        if(*line == '#')
-          while(*line++ != '\n')
-            if(line >= def + len)
-              throw(exception("parse error at menu definition"));
+        if (*line == '#')
+          while (*line++ != '\n')
+            if (line >= def + len)
+              throw(runtime_error("parse error at menu definition"));
       }
 
       // parse line
 
       p = line;
 
-      while(line < def + len && *line != '\n')
+      while (line < def + len && *line != '\n')
         line++;
 
-      if(i <= ResMenuIndex || i == MagMenuIndex)
+      if (i <= ResMenuIndex || i == MagMenuIndex)
       {
-        if(!(ParseLine(p, line, Fields, 2)))
-          throw(exception("parse error at menu definition"));
+        if (!(ParseLine(p, line, Fields, 2)))
+          throw(runtime_error("parse error at menu definition"));
       }
-      else if(i < MagMenuIndex)
+      else if (i < MagMenuIndex)
       {
-        if(!(ParseLine(p, line, Fields, 4)))
-          throw(exception("parse error at menu definition"));
+        if (!(ParseLine(p, line, Fields, 4)))
+          throw(runtime_error("parse error at menu definition"));
       }
       else
       {
-        if(!(ParseLine(p, line, Fields, 3)))
-          throw(exception("parse error at menu definition"));
+        if (!(ParseLine(p, line, Fields, 3)))
+          throw(runtime_error("parse error at menu definition"));
       }
 
       line++;
@@ -713,22 +718,22 @@ bool ViewApplication::ReadMenuDef(char *def, size_t len)
       NewMenuDef[i].Name = Fields[0];
       *Fields[1]         = 0;
 
-      if(Fields[2] < Fields[3])
+      if (Fields[2] < Fields[3])
         NewMenuDef[i].Shortcut = Fields[2][0];
       else
         NewMenuDef[i].Shortcut = 0;
 
-      if(i > ResMenuIndex && i < MagMenuIndex)
+      if (i > ResMenuIndex && i < MagMenuIndex)
       {
         // read mode name and dpi
 
         *Fields[5] = 0;
         *Fields[7] = 0;
 
-        if(sscanf(Fields[6], "%u", &ModeDPI[i - ResMenuIndex - 1]) != 1)
-          throw(exception("parse error at menu definition"));
+        if (sscanf(Fields[6], "%u", &ModeDPI[i - ResMenuIndex - 1]) != 1)
+          throw(runtime_error("parse error at menu definition"));
 
-        if(ModeDPI[i - ResMenuIndex - 1] < 50)
+        if (ModeDPI[i - ResMenuIndex - 1] < 50)
           ModeDPI[i - ResMenuIndex - 1] = 50;
 
         ModeName[i - ResMenuIndex - 1] = Fields[4];
@@ -740,10 +745,10 @@ bool ViewApplication::ReadMenuDef(char *def, size_t len)
 
         *Fields[5] = 0;
 
-        if(sscanf(Fields[4], "%u", &NewMenuDef[i].Message) != 1)
-          throw(exception("parse error at menu definition"));
+        if (sscanf(Fields[4], "%u", &NewMenuDef[i].Message) != 1)
+          throw(runtime_error("parse error at menu definition"));
 
-        if(NewMenuDef[i].Message > 15)
+        if (NewMenuDef[i].Message > 15)
           NewMenuDef[i].Message = 15;
       }
     }
@@ -767,34 +772,54 @@ bool ViewApplication::ReadMenuDef(char *def, size_t len)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void ViewApplication::LaunchFilePanel(BWindow *win)                                                            //
+// void ViewApplication::LaunchFilePanel(const BMessage *msg, BWindow *win)                                       //
 //                                                                                                                //
 // opens the FilePanel.                                                                                           //
 //                                                                                                                //
-// BWindow *win                         window the file should be loaded into or 'NULL' if a new window should be //
+// const BMessage *msg                  message which should be sent to the target                                //
+// BWindow        *win                  window the file should be loaded into or 'NULL' if a new window should be //
 //                                      created.                                                                  //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void ViewApplication::LaunchFilePanel(BWindow *win)
+void ViewApplication::LaunchFilePanel(const BMessage *msg, BWindow *win)
 {
   try
   {
-    BMessage msg((win == NULL) ? MsgOpenFile : MsgLoadFile);
+    if (OpenPanel)
+      CloseFilePanel();
 
-    if(!OpenPanel &&
-       !(OpenPanel = new BFilePanel(B_OPEN_PANEL, NULL, &PanelDirectory, B_FILE_NODE, false, NULL)))
-      return;
+    if (msg->what != MsgSavePage)
+      OpenPanel = new BFilePanel(B_OPEN_PANEL, NULL, &PanelDirectory, B_FILE_NODE, false, NULL);
+    else
+      OpenPanel = new BFilePanel(B_SAVE_PANEL, NULL, &PanelDirectory, B_FILE_NODE, false, NULL);
 
-    OpenPanel->SetMessage(&msg);
+    OpenPanel->SetMessage((BMessage *)msg);    // cast away `const'
 
-    if(win)
+    if (win)
       OpenPanel->SetTarget(BMessenger(win));   // load messages are handled by the window
     else
       OpenPanel->SetTarget(BMessenger(this));  // open messages are handled by the application
 
-    if(!OpenPanel->IsShowing())
-      OpenPanel->Show();
+    switch (msg->what)
+    {
+      case MsgOpenFile:
+        OpenPanel->SetButtonLabel(B_DEFAULT_BUTTON, "Open");
+        OpenPanel->Window()->SetTitle("BeDVI: Open");
+        break;
+
+      case MsgLoadFile:
+        OpenPanel->SetButtonLabel(B_DEFAULT_BUTTON, "Load");
+        OpenPanel->Window()->SetTitle("BeDVI: Load");
+        break;
+
+      case MsgSavePage:
+        OpenPanel->SetButtonLabel(B_DEFAULT_BUTTON, "Save");
+        OpenPanel->Window()->SetTitle("BeDVI: Save Page");
+        break;
+    }
+
+    OpenPanel->Show();
   }
   catch(...)
   {
@@ -813,10 +838,11 @@ void ViewApplication::LaunchFilePanel(BWindow *win)
 
 void ViewApplication::CloseFilePanel()
 {
-  if(OpenPanel)
+  if (OpenPanel)
   {
     OpenPanel->GetPanelDirectory(&PanelDirectory);
-    OpenPanel->Hide();
+    delete OpenPanel;
+    OpenPanel = NULL;
   }
 }
 
@@ -845,15 +871,15 @@ void ViewApplication::DisplayError(const char *msg)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void ViewApplication::SetResolution(u_int PixelsPerInch)                                                       //
+// void ViewApplication::SetResolution(uint PixelsPerInch)                                                        //
 //                                                                                                                //
 // Sets the resolution of the display.                                                                            //
 //                                                                                                                //
-// u_int PixelsPerInch                  dpi value                                                                 //
+// uint PixelsPerInch                   dpi value                                                                 //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void ViewApplication::SetResolution(u_int PixelsPerInch)
+void ViewApplication::SetResolution(uint PixelsPerInch)
 {
   int i;
 
@@ -865,12 +891,12 @@ void ViewApplication::SetResolution(u_int PixelsPerInch)
 
   // clear paths, otherwise kpathseach wouldn't update them
 
-  for(i = 0; i < kpse_last_format; i++)
+  for (i = 0; i < kpse_last_format; i++)
   {
-    if(i != kpse_cnf_format && i != kpse_db_format)
-      if(kpse_format_info[i].path != NULL)
+    if (i != kpse_cnf_format && i != kpse_db_format)
+      if (kpse_format_info[i].path != NULL)
       {
-        free(kpse_format_info[i].path);
+        free((char *)kpse_format_info[i].path);     // cast away `const'
         kpse_format_info[i].path = NULL;
       }
   }
@@ -880,7 +906,7 @@ void ViewApplication::SetResolution(u_int PixelsPerInch)
   kpse_set_program_enabled(kpse_any_glyph_format, 1, kpse_src_compile);
   release_sem(kpse_sem);
 
-  for(i = CountWindows(); i > 0; i--)
+  for (i = CountWindows(); i > 0; i--)
     WindowAt(i - 1)->PostMessage(MsgResChanged);
 }
 
@@ -919,7 +945,7 @@ static const uint16 SleepCursorImage[] =
 
 void ViewApplication::SetSleepCursor()
 {
-  if(atomic_add(&SleepPointerNestCnt, 1) < 1)
+  if (atomic_add(&SleepPointerNestCnt, 1) < 1)
     SetCursor(SleepCursorImage);
 }
 
@@ -933,27 +959,164 @@ void ViewApplication::SetSleepCursor()
 
 void ViewApplication::SetNormalCursor()
 {
-  if(atomic_add(&SleepPointerNestCnt, -1) <= 1)
+  if (atomic_add(&SleepPointerNestCnt, -1) <= 1)
     SetCursor(B_HAND_CURSOR);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// main()                                                                                                         //
+// void ViewApplication::AddDocWindow(BWindow *win)                                                               //
+//                                                                                                                //
+// Adds the window `win' to the list of document windows.                                                         //
+//                                                                                                                //
+// BWindow *win                         the window to add                                                         //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ViewApplication::AddDocWindow(BWindow *win)
+{
+  if (acquire_sem(WinListLock) != B_OK)
+    throw(runtime_error("can't acquire semaphore"));
+
+  DocumentWindows.push_back(win);
+
+  release_sem(WinListLock);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// void ViewApplication::RemoveDocWindow(BWindow *win)                                                            //
+//                                                                                                                //
+// Removes the window `win' from the list of document windows.                                                    //
+//                                                                                                                //
+// BWindow *win                         the window to remove                                                      //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ViewApplication::RemoveDocWindow(BWindow *win)
+{
+  if (acquire_sem(WinListLock) != B_OK)
+    throw(runtime_error("can't acquire semaphore"));
+
+  DocumentWindows.remove(win);
+
+  release_sem(WinListLock);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// BWindow *ViewApplication::NextDocWindow(BWindow *win)                                                          //
+//                                                                                                                //
+// Returns the next document window in the list.                                                                  //
+//                                                                                                                //
+// BWindow *win                         window                                                                    //
+//                                                                                                                //
+// Result:                              the next window                                                           //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BWindow *ViewApplication::NextDocWindow(BWindow *win)
+{
+  WindowList::iterator i, last;
+
+  if (acquire_sem(WinListLock) != B_OK)
+    throw(runtime_error("can't acquire semaphore"));
+
+  for (i = DocumentWindows.begin(), last = DocumentWindows.end(); i != last; i++)
+    if (*i == win)
+      break;
+
+  if (*i == win)
+  {
+    if (++i == last)
+      i = DocumentWindows.begin();
+
+    win = *i;
+  }
+  else
+    win = NULL;
+
+  release_sem(WinListLock);
+
+  return win;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// BWindow *ViewApplication::PrevDocWindow(BWindow *win)                                                          //
+//                                                                                                                //
+// Returns the previous document window in the list.                                                              //
+//                                                                                                                //
+// BWindow *win                         window                                                                    //
+//                                                                                                                //
+// Result:                              the previous window                                                       //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+BWindow *ViewApplication::PrevDocWindow(BWindow *win)
+{
+  WindowList::iterator i, last;
+
+  if (acquire_sem(WinListLock) != B_OK)
+    throw(runtime_error("can't acquire semaphore"));
+
+  for (i = DocumentWindows.begin(), last = DocumentWindows.end(); i != last; i++)
+    if (*i == win)
+      break;
+
+  if (*i == win)
+  {
+    if (i == DocumentWindows.begin())
+      i = DocumentWindows.end();
+
+    i--;
+
+    win = *i;
+  }
+  else
+    win = NULL;
+
+  release_sem(WinListLock);
+
+  return win;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// int ViewApplication::NumDocWindows()                                                                           //
+//                                                                                                                //
+// Returns the number of document windows in the list.                                                            //
+//                                                                                                                //
+// Result:                              number of windows                                                         //
+//                                                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int ViewApplication::NumDocWindows()
+{
+  int num;
+
+  if (acquire_sem(WinListLock) != B_OK)
+    throw(runtime_error("can't acquire semaphore"));
+
+  num  = DocumentWindows.size();
+
+  release_sem(WinListLock);
+
+  return num;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                                //
+// int main()                                                                                                     //
 //                                                                                                                //
 // main function.                                                                                                 //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-main()
+int main()
 {
   log_open("BeDVI", LogLevel_Error);
 
-#ifdef DEBUG
-  SET_DEBUG_ENABLED(true);
-
-  log_level = LogLevel_Debug;
-#endif
 #ifdef PROFILING
   PROFILE_INIT(200);
 #endif
@@ -962,7 +1125,7 @@ main()
   {
     log_info("BeDVI "VERSION" ("__DATE__")");
 
-    if(!InitKpseSem())
+    if (!InitKpseSem())
     {
       log_fatal("Can't create semaphore!");
       exit(1);

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: defines.h,v 2.2 1998/07/09 13:36:46 achim Exp $
+// $Id: defines.h,v 2.3 1999/07/22 13:36:46 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -17,9 +17,10 @@
 #include <kernel/OS.h>
 #endif
 #include <exception>
+#include <stdexcept>
 
 #ifndef NULL
-#define NULL 0L
+#include <null.h>
 #endif
 
 // types
@@ -32,26 +33,40 @@ typedef uint16 wchar;
 
 #define __STDC__ 1
 
-extern "C" {
-#define string _string
-#include "kpathsea/c-auto.h"
-#include "kpathsea/types.h"
-#undef string
+#endif
+
+extern "C"
+{
+  #define string _string
+  #include "kpathsea/c-auto.h"
+  #include "kpathsea/types.h"
+  #undef string
 }
 
+#if defined (__INTEL__)
+#include <memory>
 #endif
 
 // bitmap macros
 
 #if defined (__POWERPC__) || defined (__MC68K__)
 
-typedef uint32 BitmapUnit;
+  typedef uint32 BitmapUnit;
 
-#define BITS_PER_UNIT 32   // 8 * sizeof(BitmapUnit)
-#define MSB_FIRST
+  #define BITS_PER_UNIT 32   // 8 * sizeof(BitmapUnit)
+  #define MSB_FIRST
+
+#elif defined (__INTEL__)
+
+  typedef uint8 BitmapUnit;
+
+  #define BITS_PER_UNIT 8    // 8 * sizeof(BitmapUnit)
+  #define MSB_FIRST
 
 #else
-#error "Unknown processor!"
+
+  #error "Unknown processor!"
+
 #endif
 
 #define BMU_ADD(ptr, off) ((BitmapUnit *) ((char *)(ptr) + (off)))

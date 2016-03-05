@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: DVI-View.h,v 2.2 1998/08/20 11:16:10 achim Exp $
+// $Id: DVI-View.h,v 2.5 1999/07/22 13:36:38 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -13,9 +13,8 @@
 #ifndef VW_VIEW_H
 #define VW_VIEW_H
 
-#ifndef _VIEW_H
 #include <View.h>
-#endif
+
 #ifndef DEFINES_H
 #include "defines.h"
 #endif
@@ -36,58 +35,83 @@ class DVIView: public DocView
       BaseMagnifyWinSize = 20    // half size of the magnify window per 100 dpi resolution
     };
 
-    sem_id     DocLock;
-    DVI        *Document;
+    // document
 
-    sem_id     BufferLock;
-    BBitmap    *Buffer;          // whole page
-    BBitmap    *MagnifyBuffer;   // magnified part of the page
-    BView      *BufferView;      // used to draw into the bitmaps
+    sem_id       DocLock;
+    DVI          *Document;
 
-    u_int      PageNo;
+    // state
 
-    BPoint     MousePos;
-    int        MagnifyWinSize;
-    bool       ShowMagnify;
+    DrawSettings Settings;
+    string       SearchString;
+    uint         PageNo;
+
+    // bitmaps
+
+    sem_id       BufferLock;
+    BBitmap      *Buffer;          // whole page
+    BBitmap      *MagnifyBuffer;   // magnified part of the page
+    BView        *BufferView;      // used to draw into the bitmaps
+
+    // Magnify-Window
+
+    BPoint       MousePos;
+    int          MagnifyWinSize;
+    bool         ShowMagnify;
+
+    // scripting
+
+    static property_info PropertyList[];
 
   public:
             DVIView(BRect frame, const char *Name);
     virtual ~DVIView();
 
-    virtual void Draw(BRect updateRect);
-    virtual void KeyDown(const char *bytes, int32 numBytes);
-    virtual void MouseDown(BPoint where);
-    virtual void MouseUp(BPoint where);
-    virtual void MouseMoved(BPoint where, uint32 code, const BMessage *msg);
-    virtual void MessageReceived(BMessage *msg);
+    virtual void     Draw(BRect updateRect);
+    virtual void     KeyDown(const char *bytes, int32 numBytes);
+    virtual void     MouseDown(BPoint where);
+    virtual void     MouseUp(BPoint where);
+    virtual void     MouseMoved(BPoint where, uint32 code, const BMessage *msg);
+    virtual void     MessageReceived(BMessage *msg);
+    virtual BHandler *ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier, int32 form, const char *property);
+    virtual status_t GetSupportedSuites(BMessage *message);
 
     virtual void UpdateWindow();
 
-    void PrintPage(u_int no);
-    void SetDocument(DVI *doc);
-    bool SetPage(u_int no);
-    bool IncPage();
-    bool DecPage();
-    void SetShrinkFactor(u_short sf);
+    void SetDocument(DVI *doc, uint NewPageNo = 1);
+    DVI  *UnsetDocument();
+    bool SetPage(int no);
+    void UpdateMenus();
+    void UpdatePageCounter();
+
+  private:
+    void GetProperty(BMessage *msg);
+    void SetProperty(BMessage *msg);
+
+    void SetShrinkFactor(ushort sf);
     void ToggleBorderLine();
     void ToggleAntiAliasing();
-    void UpdateMenus();
     void RedrawBuffer();
     void RedrawMagnifyBuffer();
     bool DocumentChanged();
+    void PrintPage(uint no);
     void SetDspInfo(DisplayInfo *dsp);
-    bool Reload();
 
+    static int32 ReloadThread(void *arg);
+
+    bool Reload();
+    void Search(const char *str, bool direction);
+    void SavePage(BFile *File, uint32 Translator, uint32 Type);
+
+  public:
     bool Ok()
     {
-      return (DocLock    >= B_NO_ERROR) &&
-             (BufferLock >= B_NO_ERROR) &&
+      return (DocLock    >= B_OK) &&
+             (BufferLock >= B_OK) &&
              (BufferView != NULL);
     }
 
-  friend class DVI;
-  friend class Font;
-  friend class FontInfo;
+  friend class ViewWindow;
 };
 
 #endif

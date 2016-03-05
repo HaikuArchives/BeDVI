@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: TeXFont.cc,v 2.3 1998/08/20 11:16:25 achim Exp $
+// $Id: TeXFont.cc,v 2.6 1999/07/22 13:36:45 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -51,25 +51,29 @@ extern "C"
 
 #include "BeDVI.h"
 #include "DVI-View.h"
+#include "DVI-DrawPage.h"
 #include "TeXFont.h"
 #include "log.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// Font::Font(DVI *doc, const char *name, float size, long chksum, int magstep, double dimconvert)                //
+// Font::Font(const DVI *doc, const DrawSettings *Settings, const char *name, float size, long chksum,            //
+//            int magstep, double dimconvert)                                                                     //
 //                                                                                                                //
 // Initializes a Font.                                                                                            //
 //                                                                                                                //
-// DVI        *doc                      document the font appears in                                              //
-// const char *name                     name of the font                                                          //
-// float      size                      size of the font                                                          //
-// long       chksum                    checksum                                                                  //
-// int        magstep                   magnification                                                             //
-// double     dimconvert                factor to convert dimensions                                              //
+// const DVI          *doc              document the font appears in                                              //
+// const DrawSettings *Settings         settings
+// const char         *name             name of the font                                                          //
+// float              size              size of the font                                                          //
+// long               chksum            checksum                                                                  //
+// int                magstep           magnification                                                             //
+// double             dimconvert        factor to convert dimensions                                              //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Font::Font(DVI *doc, const char *name, float size, long chksum, int magstep, double dimconvert):
+Font::Font(const DVI *doc, const DrawSettings *Settings, const char *name, float size, long chksum, int magstep,
+           double dimconvert):
   File(NULL),
   Buffer(NULL),
   Name(NULL),
@@ -82,12 +86,12 @@ Font::Font(DVI *doc, const char *name, float size, long chksum, int magstep, dou
   Virtual(false),
   VFTable()
 {
-  if(name)
-    if(Name = new char[strlen(name) + 1])
+  if (name)
+    if (Name = new char[strlen(name) + 1])
       strcpy(Name, name);
 
-  if(!Load(doc))
-    throw(exception("can't load font"));
+  if (!Load(doc, Settings))
+    throw(runtime_error("can't load font"));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -128,10 +132,10 @@ bool Font::Open(char *&FontFound, int &SizeFound)
 
   name = kpse_find_ovf(Name);
 
-  if(!name)
+  if (!name)
     name = kpse_find_vf(Name);
 
-  if(name)
+  if (name)
   {
     SizeFound = Size;
     FontFound = NULL;
@@ -140,11 +144,11 @@ bool Font::Open(char *&FontFound, int &SizeFound)
   {
     kpse_glyph_file_type FileResult;
 
-    name = kpse_find_glyph(Name, (u_int)(Size + 0.5), kpse_any_glyph_format, &FileResult);
+    name = kpse_find_glyph(Name, (uint)(Size + 0.5), kpse_any_glyph_format, &FileResult);
 
-    if(name)
+    if (name)
     {
-      if(FileResult.source == kpse_glyph_source_fallback)
+      if (FileResult.source == kpse_glyph_source_fallback)
         FontFound = FileResult.name;
       else
         FontFound = NULL;
@@ -154,20 +158,20 @@ bool Font::Open(char *&FontFound, int &SizeFound)
   }
   release_sem(kpse_sem);
 
-  if(!name)
+  if (!name)
   {
     log_warn("font '%s' not found!", Name);
     return false;
   }
 
-  if(FontFile.SetTo(name, O_RDONLY) != B_OK ||
-     FontFile.InitCheck()           != B_OK)
+  if (FontFile.SetTo(name, O_RDONLY) != B_OK ||
+      FontFile.InitCheck()           != B_OK)
   {
     log_warn("can't open file!");
     return false;
   }
 
-  if(FontFile.GetSize(&FileSize) != B_OK)
+  if (FontFile.GetSize(&FileSize) != B_OK)
   {
     log_warn("can't read file!");
     return false;
@@ -180,7 +184,7 @@ bool Font::Open(char *&FontFound, int &SizeFound)
 
   Buffer = new char[FileSize];
 
-  if(FontFile.Read(Buffer, FileSize) < B_OK)
+  if (FontFile.Read(Buffer, FileSize) < B_OK)
   {
     delete [] Buffer;
     Buffer = NULL;
@@ -206,17 +210,17 @@ bool Font::Open(char *&FontFound, int &SizeFound)
 
 void Font::ReallocFont(wchar num) throw(bad_alloc)
 {
-  if(Virtual)
+  if (Virtual)
   {
     Macro *m;
 
     m = new Macro[num];
 
-    if(Macros)
+    if (Macros)
     {
       memcpy(m, Macros, num * sizeof(Macro));
 
-      bzero(Macros, num * sizeof(Macro));
+      memset(Macros, 0, num * sizeof(Macro));
       delete [] Macros;
     }
     Macros = m;
@@ -227,11 +231,11 @@ void Font::ReallocFont(wchar num) throw(bad_alloc)
 
     g = new Glyph[num];
 
-    if(Glyphs)
+    if (Glyphs)
     {
       memcpy(g, Glyphs, num * sizeof(Glyph));
 
-      bzero(Glyphs, num * sizeof(Glyphs));
+      memset(Glyphs, 0, num * sizeof(Glyphs));
       delete [] Glyphs;
     }
     Glyphs = g;
@@ -240,28 +244,29 @@ void Font::ReallocFont(wchar num) throw(bad_alloc)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// bool Font::Load(DVI *doc)                                                                                      //
+// bool Font::Load(const DVI *doc, const DrawSettings *Settings)                                                  //
 //                                                                                                                //
 // Loads a font.                                                                                                  //
 //                                                                                                                //
-// DVI        *doc                      document the font appears in                                              //
+// const DVI          *doc              document the font appears in                                              //
+// const DrawSettings *Settings         settings                                                                  //
 //                                                                                                                //
 // Result:                              `true' if successful, otherwise `false'                                   //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool Font::Load(DVI *doc)
+bool Font::Load(const DVI *doc, const DrawSettings *Settings)
 {
-  char  *FontFound;
-  int   SizeFound;
-  u_int Type;
+  char *FontFound;
+  int  SizeFound;
+  uint Type;
 
   try
   {
-    if(!Open(FontFound, SizeFound))
+    if (!Open(FontFound, SizeFound))
       return false;
 
-    if(FontFound)
+    if (FontFound)
     {
       delete [] Name;
       Name = FontFound;
@@ -269,26 +274,26 @@ bool Font::Load(DVI *doc)
 
     Size    = SizeFound;
     MaxChar = 255;
-    SetChar = DVI::SetChar;
+    SetChar = DrawPage::SetNormalChar;
 
     Type = ReadInt(File, 2);
 
-    if(Type == PK_Magic)
+    if (Type == Font::PK_Magic)
     {
-      if(!ReadPKIndex(doc, this))
+      if (!ReadPKIndex(this))
         return false;
     }
-    else if(Type == GF_Magic)
+    else if (Type == Font::GF_Magic)
     {
-      if(!ReadGFIndex(doc, this))
+      if (!ReadGFIndex(this))
         return false;
     }
-    else if(Type == VF_Magic)
+    else if (Type == Font::VF_Magic)
     {
-      if(!ReadVFIndex(doc, this))
+      if (!ReadVFIndex(doc, Settings, this))
         return false;
 
-      SetChar = DVI::SetVFChar;
+      SetChar = DrawPage::SetVFChar;
     }
     else
     {
@@ -296,23 +301,23 @@ bool Font::Load(DVI *doc)
       return false;
     }
 
-    if(!Virtual)
+    if (!Virtual)
     {
-      while(MaxChar > 0 && Glyphs[MaxChar].Addr == 0)
+      while (MaxChar > 0 && Glyphs[MaxChar].Addr == 0)
         MaxChar--;
 
-      if(MaxChar < 255)
+      if (MaxChar < 255)
         ReallocFont(MaxChar + 1);
     }
 /*
-    if(Virtual)
-      while(MaxChar > 0 && Macros[MaxChar].Position == NULL)
+    if (Virtual)
+      while (MaxChar > 0 && Macros[MaxChar].Position == NULL)
         MaxChar--;
     else
-      while(MaxChar > 0 && Glyphs[MaxChar].Addr == 0)
+      while (MaxChar > 0 && Glyphs[MaxChar].Addr == 0)
         MaxChar--;
 
-    if(MaxChar < 255)
+    if (MaxChar < 255)
       ReallocFont(MaxChar + 1);
 */
     Loaded = true;
@@ -345,8 +350,8 @@ void Font::FlushShrinkedGlyphes()
 {
   int i;
 
-  for(i = 0; i < MaxChar; i++)
-    if(Glyphs[i].SBitMap)
+  for (i = 0; i < MaxChar; i++)
+    if (Glyphs[i].SBitMap)
     {
       delete Glyphs[i].SBitMap;
       Glyphs[i].SBitMap = NULL;
@@ -357,7 +362,7 @@ void Font::FlushShrinkedGlyphes()
 /* Glyph **********************************************************************************************************/
 
 
-u_char *Glyph::ColourTable[MaxShrinkFactor + 1] = {};
+uchar *Glyph::ColourTable[MaxShrinkFactor + 1] = {};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
@@ -370,25 +375,25 @@ u_char *Glyph::ColourTable[MaxShrinkFactor + 1] = {};
 Glyph::Glyph():
   Addr(0),
   Advance(0),
-  Ux(0), Uy(0),
+  Ux(0), Uy(0), UWidth(0), UHeight(0),
   UBitMap(NULL),
-  Sx(0), Sy(0),
+  Sx(0), Sy(0), SWidth(0), SHeight(0),
   SBitMap(NULL)
 {
   static int32 TableInitialized = 0;           // record, if `ColourTable' is already initialized
 
-  if(atomic_add(&TableInitialized, 1) < 1)
+  if (atomic_add(&TableInitialized, 1) < 1)
   {
     // initialize table
 
     BScreen scr;
     int     Colour;
 
-    for(int Factor = 2; Factor < MaxShrinkFactor; Factor++)
+    for (int Factor = 2; Factor < MaxShrinkFactor; Factor++)
     {
       try
       {
-        ColourTable[Factor] = new u_char [Factor * Factor + 1];
+        ColourTable[Factor] = new uchar [Factor * Factor + 1];
       }
       catch(...)
       {
@@ -399,7 +404,7 @@ Glyph::Glyph():
         return;
       }
 
-      for(int i = 0; i <= Factor * Factor; i++)
+      for (int i = 0; i <= Factor * Factor; i++)
       {
         Colour = 255 - (510 * i + Factor * Factor) / (2 * Factor * Factor);
         ColourTable[Factor][i] = scr.IndexForColor(Colour, Colour, Colour);
@@ -438,7 +443,7 @@ Glyph::~Glyph()
 
 bool Glyph::Shrink(int Factor, bool AntiAliasing)
 {
-  if(AntiAliasing)
+  if (AntiAliasing)
     return ShrinkGrey(Factor);
   else
     return ShrinkMonochrome(Factor);
@@ -459,8 +464,6 @@ bool Glyph::Shrink(int Factor, bool AntiAliasing)
 bool Glyph::ShrinkMonochrome(int Factor)
 {
   BRect      r;
-  int        Width;
-  int        Height;
   int        ShrunkBytesWide;
   int        UnshrunkBytesWide;
   int        RowsLeft;
@@ -474,7 +477,7 @@ bool Glyph::ShrinkMonochrome(int Factor)
   BitmapUnit *cp;
   int        MinSample = 0.4 * Factor * Factor;
 
-  if(SBitMap)         // already shrunken?
+  if (SBitMap)         // already shrunken?
     return true;
 
   try
@@ -482,7 +485,7 @@ bool Glyph::ShrinkMonochrome(int Factor)
     Sx       = Ux / Factor;
     InitCols = Ux - Sx * Factor;
 
-    if(InitCols <= 0)
+    if (InitCols <= 0)
       InitCols += Factor;
     else
       Sx++;
@@ -491,23 +494,21 @@ bool Glyph::ShrinkMonochrome(int Factor)
     Sy   = Cols / Factor;
     Rows = Cols - Sy * Factor;
 
-    if(Rows <= 0)
+    if (Rows <= 0)
     {
       Rows += Factor;
       Sy--;
     }
 
-    r  = UBitMap->Bounds();
-
-    Width  = r.IntegerWidth()  + 1;
-    Height = r.IntegerHeight() + 1;
+    SWidth  = Sx + (UWidth  - Ux   + Factor - 1) / Factor;
+    SHeight = Sy + (UHeight - Cols + Factor - 1) / Factor + 1;
 
     r.left   = 0;
     r.top    = 0;
-    r.right  = ((Sx + (Width  - Ux   + Factor - 1) / Factor + BITS_PER_UNIT - 1) & ~(BITS_PER_UNIT - 1)) - 1;
-    r.bottom = Sy + (Height - Cols + Factor - 1) / Factor;
+    r.right  = ((SWidth + BITS_PER_UNIT - 1) & ~(BITS_PER_UNIT - 1)) - 1;
+    r.bottom = SHeight - 1;
 
-    if(!(SBitMap = new BBitmap(r, B_MONOCHROME_1_BIT)))
+    if (!(SBitMap = new BBitmap(r, B_MONOCHROME_1_BIT)))
       return false;
 
     OldPtr = (BitmapUnit *)UBitMap->Bits();
@@ -515,16 +516,16 @@ bool Glyph::ShrinkMonochrome(int Factor)
 
     ShrunkBytesWide   = SBitMap->BytesPerRow();
     UnshrunkBytesWide = UBitMap->BytesPerRow();
-    RowsLeft          = Height;
+    RowsLeft          = UHeight;
 
-    bzero(NewPtr, SBitMap->BitsLength());
+    memset(NewPtr, 0, SBitMap->BitsLength());
 
-    while(RowsLeft)
+    while (RowsLeft)
     {
-      if(Rows > RowsLeft)
+      if (Rows > RowsLeft)
         Rows = RowsLeft;
 
-      ColsLeft = Width;
+      ColsLeft = UWidth;
       cp       = NewPtr;
       Cols     = InitCols;
 
@@ -534,16 +535,16 @@ bool Glyph::ShrinkMonochrome(int Factor)
       m = 1;
 #endif
 
-      while(ColsLeft)
+      while (ColsLeft)
       {
-        if(Cols > ColsLeft)
+        if (Cols > ColsLeft)
           Cols = ColsLeft;
 
-        if(Sample(OldPtr, UnshrunkBytesWide, Width - ColsLeft, Cols, Rows) >= MinSample)
+        if (Sample(OldPtr, UnshrunkBytesWide, UWidth - ColsLeft, Cols, Rows) >= MinSample)
           *cp |= m;
 
 #ifdef MSB_FIRST
-        if(m == 1)
+        if (m == 1)
         {
           m = (BitmapUnit) 1 << (BITS_PER_UNIT - 1);
           cp++;
@@ -551,7 +552,7 @@ bool Glyph::ShrinkMonochrome(int Factor)
         else
           m >>= 1;
 #else
-        if(m == (BitmapUnit) 1 << (BITS_PER_UNIT - 1))
+        if (m == (BitmapUnit) 1 << (BITS_PER_UNIT - 1))
         {
           m = 1;
           cp++;
@@ -610,8 +611,6 @@ bool Glyph::ShrinkMonochrome(int Factor)
 bool Glyph::ShrinkGrey(int Factor)
 {
   BRect      r;
-  int        Width;
-  int        Height;
   int        ShrunkBytesWide;
   int        UnshrunkBytesWide;
   int        RowsLeft;
@@ -623,7 +622,7 @@ bool Glyph::ShrinkGrey(int Factor)
   uint8      *NewPtr;
   uint8      *cp;
 
-  if(SBitMap)         // already shrunken?
+  if (SBitMap)         // already shrunken?
     return true;
 
   try
@@ -631,7 +630,7 @@ bool Glyph::ShrinkGrey(int Factor)
     Sx       = Ux / Factor;
     InitCols = Ux - Sx * Factor;
 
-    if(InitCols <= 0)
+    if (InitCols <= 0)
       InitCols += Factor;
     else
       Sx++;
@@ -640,23 +639,21 @@ bool Glyph::ShrinkGrey(int Factor)
     Sy   = Cols / Factor;
     Rows = Cols - Sy * Factor;
 
-    if(Rows <= 0)
+    if (Rows <= 0)
     {
       Rows += Factor;
       Sy--;
     }
 
-    r  = UBitMap->Bounds();
-
-    Width  = r.IntegerWidth()  + 1;
-    Height = r.IntegerHeight() + 1;
+    SWidth  = Sx + (UWidth  - Ux   + Factor - 1) / Factor;
+    SHeight = Sy + (UHeight - Cols + Factor - 1) / Factor + 1;
 
     r.left   = 0;
     r.top    = 0;
-    r.right  = Sx + (Width  - Ux   + Factor - 1) / Factor - 1;
-    r.bottom = Sy + (Height - Cols + Factor - 1) / Factor;
+    r.right  = SWidth  - 1;
+    r.bottom = SHeight - 1;
 
-    if(!(SBitMap = new BBitmap(r, B_COLOR_8_BIT)))      // should be replaced by B_GRAYSCALE_8_BIT
+    if (!(SBitMap = new BBitmap(r, B_COLOR_8_BIT)))      // should be replaced by B_GRAYSCALE_8_BIT
       return false;
 
     OldPtr = (BitmapUnit *)UBitMap->Bits();
@@ -664,25 +661,25 @@ bool Glyph::ShrinkGrey(int Factor)
 
     ShrunkBytesWide   = SBitMap->BytesPerRow();
     UnshrunkBytesWide = UBitMap->BytesPerRow();
-    RowsLeft          = Height;
+    RowsLeft          = UHeight;
 
     memset(NewPtr, 255, SBitMap->BitsLength());
 
-    while(RowsLeft)
+    while (RowsLeft)
     {
-      if(Rows > RowsLeft)
+      if (Rows > RowsLeft)
         Rows = RowsLeft;
 
-      ColsLeft = Width;
+      ColsLeft = UWidth;
       Cols     = InitCols;
       cp       = NewPtr;
 
-      while(ColsLeft)
+      while (ColsLeft)
       {
-        if(Cols > ColsLeft)
+        if (Cols > ColsLeft)
           Cols = ColsLeft;
 
-        *cp++ = ColourTable[Factor][Sample(OldPtr, UnshrunkBytesWide, Width - ColsLeft, Cols, Rows)];
+        *cp++ = ColourTable[Factor][Sample(OldPtr, UnshrunkBytesWide, UWidth - ColsLeft, Cols, Rows)];
 
         ColsLeft -= Cols;
         Cols      = Factor;
@@ -764,7 +761,7 @@ int Glyph::Sample(BitmapUnit *Bits, int BytesPerRow, int BitSkip, int Width, int
   BitShift = BitSkip % BITS_PER_UNIT;
 #endif
 
-  while(BitsLeft)
+  while (BitsLeft)
   {
 #ifdef MSB_FIRST
     wid = BitShift;
@@ -772,28 +769,28 @@ int Glyph::Sample(BitmapUnit *Bits, int BytesPerRow, int BitSkip, int Width, int
     wid = BITS_PER_UNIT - BitShift;
 #endif
 
-    if(wid > BitsLeft)
+    if (wid > BitsLeft)
       wid = BitsLeft;
 
-    if(wid > 6)
+    if (wid > 6)
       wid = 6;
 
 #ifdef MSB_FIRST
     BitShift -= wid;
 #endif
 
-    for(cp = ptr; cp < EndPtr; cp = BMU_ADD(cp, BytesPerRow))
+    for (cp = ptr; cp < EndPtr; cp = BMU_ADD(cp, BytesPerRow))
       n += SampleCount[(*cp >> BitShift) & BitMasks[wid]];
 
 #ifdef MSB_FIRST
-    if(BitShift == 0)
+    if (BitShift == 0)
     {
       BitShift = BITS_PER_UNIT;
       ptr++;
     }
 #else
     BitShift += wid;
-    if(BitShift == BITS_PER_UNIT)
+    if (BitShift == BITS_PER_UNIT)
     {
       BitShift = 0;
       ptr++;

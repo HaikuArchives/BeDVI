@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: squeeze.c,v 2.1 1998/07/09 13:36:48 achim Exp $
+// $Id: squeeze.c,v 2.2 1999/07/22 13:36:47 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -110,9 +110,6 @@ char *s ;
    lastspecial = 0 ;
 }
 char buf[BUFLENGTH] ;
-#ifndef VMS
-void
-#endif
 main(argc, argv)
 int argc ;
 char *argv[] ;

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: GhostScript.cc,v 2.2 1998/08/20 11:16:14 achim Exp $
+// $Id: GhostScript.cc,v 2.5 1999/07/22 13:36:42 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -34,8 +34,9 @@
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#include <stdio.h>
 #include <string.h>
-#include "DVI.h"
+#include "DVI-DrawPage.h"
 #include "log.h"
 
 #ifndef NO_GHOSTSCRIPT
@@ -54,20 +55,20 @@ extern "C"
 
 // Interface classes
 
-void DrawBBox(DrawInfo *di);
+void DrawBBox(DrawPage *dp);
 
 class EmptyPSInterface: public PSInterface
 {
   public:
-    virtual void DrawBegin(DrawInfo *di, int, int, char *)
+    virtual void DrawBegin(const DrawPage *dp, int, int, const char *)
     {
-      DrawBBox(di);
+      DrawBBox(dp);
     }
 
-    virtual void DrawRaw(char *)  {}
-    virtual void DrawFile(char *) {}
-    virtual void DrawEnd(char *)  {}
-    virtual void EndPage()        {}
+    virtual void DrawRaw(const char *)  {}
+    virtual void DrawFile(const char *) {}
+    virtual void DrawEnd(const char *)  {}
+    virtual void EndPage()              {}
 };
 
 static EmptyPSInterface EmptyIface;
@@ -77,8 +78,8 @@ static EmptyPSInterface EmptyIface;
 class GSInterface: public PSInterface
 {
   private:
-    u_int PageWidth;      // size of the current page
-    u_int PageHeight;
+    uint  PageWidth;      // size of the current page
+    uint  PageHeight;
     int   Magnification;  // magnification currently in use
     int   Shrink;         // shrink factor currently in use
 
@@ -100,19 +101,19 @@ class GSInterface: public PSInterface
       Active(false)
     {}
 
-    bool Init(DrawInfo *di);
+    bool Init(DrawPage *dp);
 
-    virtual void DrawBegin(DrawInfo *di, int, int, char *);
-    virtual void DrawRaw(char *);
-    virtual void DrawFile(char *);
-    virtual void DrawEnd(char *);
+    virtual void DrawBegin(const DrawPage *dp, int, int, const char *);
+    virtual void DrawRaw(const char *);
+    virtual void DrawFile(const char *);
+    virtual void DrawEnd(const char *);
     virtual void EndPage();
 
   private:
     static int  CallBack(int message, char *str, ulong count);
     static void Send(const char *cmd, size_t len);
 
-  friend PSInterface* InitPSInterface(DrawInfo *di);
+  friend PSInterface* InitPSInterface(DrawPage *dp);
 };
 
 static GSInterface GSIface;
@@ -125,17 +126,17 @@ static GSInterface GSIface;
 //                                                                                                                //
 // initializes the GhostScript interface.                                                                         //
 //                                                                                                                //
-// DrawInfo *di                         drawing information                                                       //
+// DrawPage *dp                         drawing information                                                       //
 //                                                                                                                //
 // Result:                              pointer to the interface, mustn't be deleted!                             //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-PSInterface* InitPSInterface(DrawInfo *di)
+PSInterface* InitPSInterface(DrawPage *dp)
 {
 #ifndef NO_GHOSTSCRIPT
 
-  if(GSIface.Initialized || GSIface.Init(di))
+  if (GSIface.Initialized || GSIface.Init(dp))
     return &GSIface;
   else
     return &EmptyIface;
@@ -161,7 +162,7 @@ PSInterface* InitPSInterface(DrawInfo *di)
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool GSInterface::Init(DrawInfo *di)
+bool GSInterface::Init(DrawPage *dp)
 {
   static const int  GSargc = 9;
   static const char *GSargv[GSargc + 1] =
@@ -169,7 +170,7 @@ bool GSInterface::Init(DrawInfo *di)
     "gs",
     NULL,
     NULL,
-    "-sDEVICE=bebox",
+    "-sDEVICE=beos",
     "-dDEVICEXRESOLUTION=72",
     "-dDEVICEYRESOLUTION=72",
     "-dNOPAUSE",
@@ -180,17 +181,17 @@ bool GSInterface::Init(DrawInfo *di)
 
   char Buffer[100];
 
-  sprintf(Buffer,      "-dDEVICEWIDTH=%d",  di->Document->PageWidth);
-  sprintf(Buffer + 50, "-dDEVICEHEIGHT=%d", di->Document->PageHeight);
+  sprintf(Buffer,      "-dDEVICEWIDTH=%d",  dp->Document->PageWidth);
+  sprintf(Buffer + 50, "-dDEVICEHEIGHT=%d", dp->Document->PageHeight);
   GSargv[1] = Buffer;
   GSargv[2] = Buffer + 50;
 
-  vw = di->vw;
+  vw = dp->vw;
 
   log_info("running: %s %s %s %s %s %s %s %s",
     GSargv[0], GSargv[1], GSargv[2], GSargv[3], GSargv[4], GSargv[5], GSargv[6], GSargv[7]);
 
-  if(gsdll_init(CallBack, NULL, GSargc, GSargv) != 0)
+  if (gsdll_init(CallBack, NULL, GSargc, (char **)GSargv) != 0)
   {
     log_warn("can't initialize GhostScript!");
     return false;
@@ -206,17 +207,17 @@ bool GSInterface::Init(DrawInfo *di)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)                                         //
+// void GSInterface::DrawBegin(DrawPage *dp, int xul, int yul, char *cmd)                                         //
 //                                                                                                                //
 // initiates a drawing session.                                                                                   //
 //                                                                                                                //
-// DrawInfo *di                         drawing information                                                       //
+// DrawPage *dp                         drawing information                                                       //
 // int      xul, yul                    upper left corner                                                         //
 // char     *cmd                        PostScript commands                                                       //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)
+void GSInterface::DrawBegin(const DrawPage *dp, int xul, int yul, const char *cmd)
 {
   // loop:
   //   if first character is 'H'
@@ -244,8 +245,8 @@ void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)
 
   log_debug("GSDrawBegin(%s)", cmd);
 
-  if(!Initialized)
-    Init(di);
+  if (!Initialized)
+    Init(dp);
 
   gsdll_execute_begin();
 
@@ -253,12 +254,12 @@ void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)
   Send(psheader, sizeof(psheader) - 1);
   Send(str2,     sizeof(str2) - 1);
 
-  if(!Active)
+  if (!Active)
   {
-    if(di->Document->PageWidth > PageWidth || di->Document->PageHeight > PageHeight)
+    if (dp->Document->PageWidth > PageWidth || dp->Document->PageHeight > PageHeight)
     {
-      PageWidth  = di->Document->PageWidth;
-      PageHeight = di->Document->PageHeight;
+      PageWidth  = dp->Document->PageWidth;
+      PageHeight = dp->Document->PageHeight;
 
       sprintf(Buffer,
               "H mark /HWSize [%d %d] /ImagingBBox [0 0 %d %d] "
@@ -268,17 +269,17 @@ void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)
               PageWidth, PageHeight, PageWidth, PageHeight);
       Send(Buffer, strlen(Buffer));
     }
-    if(di->Document->Magnification != Magnification)
+    if (dp->Document->Magnification != Magnification)
     {
-      Magnification = di->Document->Magnification;
+      Magnification = dp->Document->Magnification;
       sprintf(Buffer, "H TeXDict begin /DVImag %d 1000 div def end stop\n%%%%xdvimark\n", Magnification);
       Send(Buffer, strlen(Buffer));
     }
-    if(di->Document->Settings.ShrinkFactor != Shrink)
+    if (dp->Settings.ShrinkFactor != Shrink)
     {
-      Shrink = di->Document->Settings.ShrinkFactor;
+      Shrink = dp->Settings.ShrinkFactor;
       sprintf(Buffer, "H TeXDict begin %d %d div dup /Resolution X /VResolution X end stop\n%%%%xdvimark\n",
-              di->DspInfo->PixelsPerInch, Shrink);
+              dp->Settings.DspInfo.PixelsPerInch, Shrink);
       Send(Buffer, strlen(Buffer));
     }
     Send(str3, sizeof(str3) - 1);
@@ -293,40 +294,38 @@ void GSInterface::DrawBegin(DrawInfo *di, int xul, int yul, char *cmd)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void GSInterface::DrawRaw(char *cmd)                                                                           //
+// void GSInterface::DrawRaw(const char *cmd)                                                                     //
 //                                                                                                                //
 // sends PostScript commands to GhostScript.                                                                      //
 //                                                                                                                //
-// char     *cmd                        PostScript commands                                                       //
+// const char *cmd                      PostScript commands                                                       //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void GSInterface::DrawRaw(char *cmd)
+void GSInterface::DrawRaw(const char *cmd)
 {
-  int len = strlen(cmd);
-
-  if(!Active)
+  if (!Active)
     return;
 
-  cmd[len] = '\n';
-  Send(cmd, len + 1);
+  Send(cmd, strlen(cmd));
+  Send("\n", 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void GSInterface::DrawFile(char *cmd)                                                                          //
+// void GSInterface::DrawFile(const char *cmd)                                                                    //
 //                                                                                                                //
 // executes a PostScript file.                                                                                    //
 //                                                                                                                //
-// char     *cmd                        file name                                                                 //
+// const char *cmd                      file name                                                                 //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void GSInterface::DrawFile(char *cmd)
+void GSInterface::DrawFile(const char *cmd)
 {
   char Buffer[PATH_MAX + 7];
 
-  if(!Active)
+  if (!Active)
     return;
 
   sprintf(Buffer, "(%s)run\n", cmd);
@@ -335,17 +334,17 @@ void GSInterface::DrawFile(char *cmd)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// void GSInterface::DrawEnd(char *cmd)                                                                           //
+// void GSInterface::DrawEnd(const char *cmd)                                                                     //
 //                                                                                                                //
 // end a drawing session.                                                                                         //
 //                                                                                                                //
-// char     *cmd                        PostScript commands                                                       //
+// const char *cmd                      PostScript commands                                                       //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void GSInterface::DrawEnd(char *cmd)
+void GSInterface::DrawEnd(const char *cmd)
 {
-  if(!Active)
+  if (!Active)
     return;
 
   Send(cmd, strlen(cmd));
@@ -364,7 +363,7 @@ void GSInterface::EndPage()
 {
   static const char str[] = "stop\n%%xdvimark\n";
 
-  if(Active)
+  if (Active)
   {
     Send(str, sizeof(str) - 1);
 
@@ -398,7 +397,7 @@ int GSInterface::CallBack(int message, char *str, ulong count)
 {
   log_debug("gs callback: %d 0x%08x %d", message, str, count);
 
-  switch(message)
+  switch (message)
   {
     case GSDLL_STDIN:
       return 0; 
@@ -407,13 +406,13 @@ int GSInterface::CallBack(int message, char *str, ulong count)
       return count;
 
     case GSDLL_DEVICE:
-      if(count)
+      if (count)
         GSIface.Device = (unsigned char *)str;
       break;
 
     case GSDLL_SYNC:
     case GSDLL_PAGE:
-      if(count)
+      if (count)
       {
         gsdll_draw(GSIface.Device, GSIface.vw, GSIface.vw->Bounds(), GSIface.vw->Bounds());
         GSIface.vw->Sync();
@@ -445,7 +444,7 @@ int GSInterface::CallBack(int message, char *str, ulong count)
 
 void GSInterface::Send(const char *cmd, size_t len)
 {
-  if(len < 180)
+  if (len < 180)
     log_debug("sending to gs: %s", cmd);
   else
     log_debug("sending to gs: ...");

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: MeasureWin.cc,v 2.1 1998/08/20 11:16:17 achim Exp $
+// $Id: MeasureWin.cc,v 2.3 1999/07/22 13:36:43 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -12,6 +12,7 @@
 
 #include <InterfaceKit.h>
 #include <string.h>
+#include <stdio.h>
 #include "BeDVI.h"
 #include "log.h"
 
@@ -113,7 +114,7 @@ MeasureWindow::MeasureWindow(BRect frame, font_height *ph, float w1, float w2):
           "Measure",
           B_FLOATING_WINDOW_LOOK,
           B_FLOATING_APP_WINDOW_FEEL,
-          B_NOT_RESIZABLE | B_NOT_CLOSABLE | B_NOT_ZOOMABLE | B_AVOID_FOCUS),
+          B_NOT_RESIZABLE | B_NOT_CLOSABLE | B_NOT_ZOOMABLE | B_AVOID_FOCUS | B_ASYNCHRONOUS_CONTROLS),
   vw(NULL)
 {
   vw = new MeasureView(Bounds(), ph, w1, w2);
@@ -128,13 +129,13 @@ MeasureWindow::~MeasureWindow()
 
 void MeasureWindow::MessageReceived(BMessage *msg)
 {
-  if(msg->what == MsgPoint)
+  if (msg->what == MsgPoint)
   {
     float x;
 
-    if(msg->FindFloat("x", &x) == B_OK)
+    if (msg->FindFloat("x", &x) == B_OK)
       vw->x = x;
-    if(msg->FindFloat("y", &x) == B_OK)
+    if (msg->FindFloat("y", &x) == B_OK)
       vw->y = x;
 
     vw->Invalidate();
@@ -171,7 +172,7 @@ BWindow *OpenMeasureWindow(BPoint pos)
     log_error("%s!", e.what());
     log_debug("at %s:%d", __FILE__, __LINE__);
 
-    if(mwin)
+    if (mwin)
       mwin->Quit();
     mwin = NULL;
   }
@@ -180,7 +181,7 @@ BWindow *OpenMeasureWindow(BPoint pos)
     log_error("unknown exception!");
     log_debug("at %s:%d", __FILE__, __LINE__);
 
-    if(mwin)
+    if (mwin)
       mwin->Quit();
     mwin = NULL;
   }

@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: log.cc,v 2.1 1998/07/09 13:36:47 achim Exp $
+// $Id: log.cc,v 2.2 1998/10/04 14:25:18 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -29,7 +29,7 @@ void log_fatal(char *format,...)
   char buffer[256];
   va_list args;
 
-  if(log_level < LogLevel_Fatal)
+  if (log_level < LogLevel_Fatal)
     return;
 
   va_start(args, format);
@@ -44,7 +44,7 @@ void log_error(char *format,...)
   char buffer[256];
   va_list args;
 
-  if(log_level < LogLevel_Error)
+  if (log_level < LogLevel_Error)
     return;
 
   va_start(args, format);
@@ -59,7 +59,7 @@ void log_warn(char *format,...)
   char buffer[256];
   va_list args;
 
-  if(log_level < LogLevel_Warn)
+  if (log_level < LogLevel_Warn)
     return;
 
   va_start(args, format);
@@ -74,7 +74,7 @@ void log_info(char *format,...)
   char buffer[256];
   va_list args;
 
-  if(log_level < LogLevel_Info)
+  if (log_level < LogLevel_Info)
     return;
 
   va_start(args, format);
@@ -89,7 +89,7 @@ void log_debug(char *format,...)
   char buffer[256];
   va_list args;
 
-  if(log_level < LogLevel_Debug)
+  if (log_level < LogLevel_Debug)
     return;
 
   va_start(args, format);

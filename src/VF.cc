@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// $Id: VF.cc,v 2.2 1998/08/20 11:16:27 achim Exp $
+// $Id: VF.cc,v 2.5 1999/07/25 13:24:23 achim Exp $
 //                                                                                                                //
 // BeDVI                                                                                                          //
 // by Achim Blumensath                                                                                            //
@@ -41,32 +41,34 @@
 #include "TeXFont.h"
 #include "DVI.h"
 #include "DVI-View.h"
+#include "log.h"
 
-static const u_char LongChar = 242;
+static const uchar LongChar = 242;
 
-static const u_int VF_Param_1 = 20;
-static const u_int VF_Param_2 = 256;
+static const uint VF_Param_1 = 20;
+static const uint VF_Param_2 = 256;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                                //
-// bool ReadVFIndex(DVI *doc, Font *f)                                                                            //
+// bool ReadVFIndex(const DVI *doc, cosnt DrawSettings *Settings, Font *f)                                        //
 //                                                                                                                //
 // Reads general information from a font-file.                                                                    //
 //                                                                                                                //
-// DVI  *doc                            document the font appears in                                              //
-// Font *f                              font                                                                      //
+// DVI          *doc                    document the font appears in                                              //
+// DrawSettings *Settings               settings                                                                  //
+// Font         *f                      font                                                                      //
 //                                                                                                                //
 // Result:                              `true' if successful, otherwise `false'                                   //
 //                                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool ReadVFIndex(DVI *doc, Font *f)
+bool ReadVFIndex(const DVI *doc, const DrawSettings *Settings, Font *f)
 {
-  u_char Cmd;
-  u_char *Avail;
-  u_char *AvailEnd;
-  long   CheckSum;
-  u_long MaxCC = 0;
+  uchar Cmd;
+  uchar *Avail;
+  uchar *AvailEnd;
+  long  CheckSum;
+  ulong MaxCC = 0;
 
   f->ReadChar = NULL;
   f->Virtual  = true;
@@ -79,40 +81,40 @@ bool ReadVFIndex(DVI *doc, Font *f)
 
   f->FirstFont = NULL;
 
-  for(Cmd = ReadInt(f->File, 1); Cmd >= FontDef1 && Cmd <= FontDef4; Cmd = ReadInt(f->File, 1))
+  for (Cmd = ReadInt(f->File, 1); Cmd >= DVI::FontDef1 && Cmd <= DVI::FontDef4; Cmd = ReadInt(f->File, 1))
   {
     Font *NewFont;
 
-    if(!(NewFont = f->VFTable.LoadFont(doc, f->File, Cmd)))
+    if (!(NewFont = f->VFTable.LoadFont(doc, Settings, f->File, f, Cmd)))
       return false;
 
-    if(f->FirstFont == NULL)
+    if (f->FirstFont == NULL)
       f->FirstFont = NewFont;
   }
   f->MaxChar = ~0;
 
-  if(!(f->Macros = new Macro[f->MaxChar]))
+  if (!(f->Macros = new Macro[f->MaxChar + 1]))
     return false;
 
-  bzero(f->Macros, f->MaxChar * sizeof(Macro));
+  memset(f->Macros, 0, (f->MaxChar + 1) * sizeof(Macro));
 
   Avail    = NULL;
   AvailEnd = NULL;
 
-  for(; Cmd <= LongChar; Cmd = ReadInt(f->File, 1))
+  for (; Cmd <= LongChar; Cmd = ReadInt(f->File, 1))
   {
-    Macro  *m;
-    int    len;
-    u_long cc;
-    long   Width;
+    Macro *m;
+    int   len;
+    ulong cc;
+    long  Width;
 
-    if(Cmd == LongChar)
+    if (Cmd == LongChar)
     {
       len   = ReadInt(f->File, 4);
       cc    = ReadInt(f->File, 4);
       Width = ReadInt(f->File, 4);
 
-      if(cc >= f->MaxChar)
+      if (cc > f->MaxChar)
       {
         f->File->Seek(len, SEEK_CUR);
         continue;
@@ -124,15 +126,15 @@ bool ReadVFIndex(DVI *doc, Font *f)
       cc    = ReadInt(f->File, 1);
       Width = ReadInt(f->File, 3);
     }
-    if(cc > MaxCC)  MaxCC = cc;
+    if (cc > MaxCC)  MaxCC = cc;
 
     m = &f->Macros[cc];
 
     m->Advance = Width * f->DimConvert;
 
-    if(len > 0)
+    if (len > 0)
     {
-      if(len <= AvailEnd - Avail)
+      if (len <= AvailEnd - Avail)
       {
         m->Position = Avail;
         Avail      += len;
@@ -141,16 +143,16 @@ bool ReadVFIndex(DVI *doc, Font *f)
       {
         m->FreeMe = true;
 
-        if(len <= VF_Param_1)
+        if (len <= VF_Param_1)
         {
-          if(!(m->Position = new u_char[VF_Param_2]))
+          if (!(m->Position = new uchar[VF_Param_2]))
             return false;
           Avail    = m->Position;
           AvailEnd = Avail + VF_Param_2;
           Avail   += len;
         }
         else
-          if(!(m->Position = new u_char[len]))
+          if (!(m->Position = new uchar[len]))
             return false;
       }
       f->File->Read(m->Position, len);
@@ -159,14 +161,14 @@ bool ReadVFIndex(DVI *doc, Font *f)
     }
   }
 
-  if(Cmd != Postamble)
+  if (Cmd != DVI::Postamble)
     return false;
 
   f->MaxChar = MaxCC;
 
-  Macro *NewMacros = new Macro[f->MaxChar];
+  Macro *NewMacros = new Macro[f->MaxChar + 1];
 
-  memcpy(NewMacros, f->Macros, f->MaxChar * sizeof(Macro));
+  memcpy(NewMacros, f->Macros, (f->MaxChar + 1) * sizeof(Macro));
 
   delete [] f->Macros;
 
